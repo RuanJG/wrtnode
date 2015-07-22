@@ -750,23 +750,23 @@ endif
 # MT7620N Profiles
 #
 
-Image/Build/Profile/MLW221=$(call BuildFirmware/Default16M/$(1),$(1),mlw221,MLW221)
-Image/Build/Profile/MLWG2=$(call BuildFirmware/Default16M/$(1),$(1),mlwg2,MLWG2)
-Image/Build/Profile/WMR300=$(call BuildFirmware/Default8M/$(1),$(1),wmr-300,WMR300)
-Image/Build/Profile/RT-N14U=$(call BuildFirmware/Default8M/$(1),$(1),rt-n14u,RT-N14U)
-Image/Build/Profile/WR8305RT=$(call BuildFirmware/Default8M/$(1),$(1),wr8305rt,WR8305RT)
+#Image/Build/Profile/MLW221=$(call BuildFirmware/Default16M/$(1),$(1),mlw221,MLW221)
+#Image/Build/Profile/MLWG2=$(call BuildFirmware/Default16M/$(1),$(1),mlwg2,MLWG2)
+#Image/Build/Profile/WMR300=$(call BuildFirmware/Default8M/$(1),$(1),wmr-300,WMR300)
+#Image/Build/Profile/RT-N14U=$(call BuildFirmware/Default8M/$(1),$(1),rt-n14u,RT-N14U)
+#Image/Build/Profile/WR8305RT=$(call BuildFirmware/Default8M/$(1),$(1),wr8305rt,WR8305RT)
 Image/Build/Profile/WRTNODE=$(call BuildFirmware/Default16M/$(1),$(1),wrtnode,WRTNODE)
-Image/Build/Profile/ZBT-WA05=$(call BuildFirmware/Default8M/$(1),$(1),zbt-wa05,ZBT-WA05)
+#Image/Build/Profile/ZBT-WA05=$(call BuildFirmware/Default8M/$(1),$(1),zbt-wa05,ZBT-WA05)
 
 ifeq ($(SUBTARGET),mt7620n)
 define Image/Build/Profile/Default
-	$(call Image/Build/Profile/MLW221,$(1))
-	$(call Image/Build/Profile/MLWG2,$(1))
-	$(call Image/Build/Profile/WMR300,$(1))
-	$(call Image/Build/Profile/RT-N14U,$(1))
-	$(call Image/Build/Profile/WR8305RT,$(1))
+	#$(call Image/Build/Profile/MLW221,$(1))
+	#$(call Image/Build/Profile/MLWG2,$(1))
+	#$(call Image/Build/Profile/WMR300,$(1))
+	#$(call Image/Build/Profile/RT-N14U,$(1))
+	#$(call Image/Build/Profile/WR8305RT,$(1))
 	$(call Image/Build/Profile/WRTNODE,$(1))
-	$(call Image/Build/Profile/ZBT-WA05,$(1))
+	#$(call Image/Build/Profile/ZBT-WA05,$(1))
 endef
 endif
 

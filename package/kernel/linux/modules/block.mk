@@ -561,13 +561,14 @@ $(eval $(call KernelPackage,nbd))
 define KernelPackage/scsi-core
   SUBMENU:=$(BLOCK_MENU)
   TITLE:=SCSI device support
+  DEPENDS:=+TARGET_hi3516a:kmod-lib-crc-t10dif
   KCONFIG:= \
 	CONFIG_SCSI \
 	CONFIG_BLK_DEV_SD
   FILES:= \
 	$(if $(findstring y,$(CONFIG_SCSI)),,$(LINUX_DIR)/drivers/scsi/scsi_mod.ko) \
 	$(LINUX_DIR)/drivers/scsi/sd_mod.ko
-  AUTOLOAD:=$(call AutoLoad,40,sd_mod,1)
+  AUTOLOAD:=$(call AutoLoad,20,scsi_mod,1) $(call AutoLoad,40,sd_mod,1)
 endef
 
 $(eval $(call KernelPackage,scsi-core))

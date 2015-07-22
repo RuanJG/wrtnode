@@ -6,6 +6,10 @@
 	compatible = "wrtnode", "ralink,mt7620n-soc";
 	model = "WRTNODE";
 
+	chosen {
+		bootargs = "console=ttyS0,115200";
+	};
+
 	palmbus@10000000 {
 		gpio2: gpio@660 {
 			status = "okay";
@@ -77,4 +81,25 @@
 			};
 		};
 	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+		indicator {
+			label = "wrtnode:blue:indicator";
+			gpios = <&gpio1 14 0>;
+		};
+	};
+
+	gpio-keys-polled {
+		compatible = "gpio-keys-polled";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		poll-interval = <20>;
+		reset {
+			label = "reset";
+			gpios = <&gpio0 1 1>;
+			linux,code = <0x198>;
+		};
+	};
+
 };

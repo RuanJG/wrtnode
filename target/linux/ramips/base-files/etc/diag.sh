@@ -193,6 +193,9 @@ get_status_led() {
 	y1s)
 		status_led="lenovo:blue:power"
 		;;
+	wrtnode)
+		status_led="wrtnode:blue:indicator"
+		;;
 	esac
 }
 

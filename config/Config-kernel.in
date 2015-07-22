@@ -107,7 +107,7 @@ config KERNEL_EARLY_PRINTK
 
 config KERNEL_AIO
 	bool "Compile the kernel with asynchronous IO support"
-	default n
+	default y
 
 config KERNEL_DIRECT_IO
 	bool "Compile the kernel with direct IO support"
@@ -168,7 +168,7 @@ config USE_SPARSE
 
 config KERNEL_CGROUPS
 	bool "Enable kernel cgroups"
-	default n
+	default y
 
 if KERNEL_CGROUPS
 
@@ -186,14 +186,14 @@ if KERNEL_CGROUPS
 
 	config KERNEL_CGROUP_FREEZER
 		bool "Freezer cgroup subsystem"
-		default n
+		default y
 		help
 		  Provides a way to freeze and unfreeze all tasks in a
 		  cgroup.
 
 	config KERNEL_CGROUP_DEVICE
 		bool "Device controller for cgroups"
-		default y
+		default n
 		help
 		  Provides a cgroup implementing whitelists for devices which
 		  a process in the cgroup can mknod or open.
@@ -346,7 +346,7 @@ if KERNEL_CGROUPS
 
 	config KERNEL_BLK_CGROUP
 		bool "Block IO controller"
-		default y
+		default n
 		help
 		  Generic block IO controller cgroup interface. This is the common
 		  cgroup interface which should be used by various IO controlling
@@ -377,7 +377,7 @@ if KERNEL_CGROUPS
 
 	config KERNEL_NETPRIO_CGROUP
 		bool "Network priority cgroup"
-		default y
+		default n
 
 endif
 
