@@ -13,10 +13,23 @@
 #include <sys/time.h>
 #include <pthread.h>
 #include <wait.h>
+
+#include <termios.h>
+#include <fcntl.h>   // File control definitions
+
+#include <common/mavlink.h>
+
+
 #define PORTNUM 6666
 //#define IPADDR "192.168.8.1"
 #define IPADDR "10.0.2.15"
-#define CLIENTNUM 1
+#define CLIENTNUM 10
+#define UART_NAME "/dev/ttyUSB0"
+#define BAUDRATE  115200
+#define DATA_BITS  8
+#define STOP_BITS  1
+#define PARITY  0
+#define HARDWARE_CONTROL  0
 
 
 typedef struct __g_data_t{
@@ -33,15 +46,28 @@ typedef struct __g_data_t{
 	//thread
 	pthread_t read_thread_id;
 	pthread_t write_thread_id;
+	char thread_status;//b0=1/0 read on/off b1 = 1/0 write on/off
+	pthread_mutex_t mutex;
 }g_data_t;
 
-
+typedef struct __g_uart_t{
+	char name[32];
+	int baudrate;
+	int data_bits;
+	int stop_bits;
+	int parity;
+	int hardware_control;
+	int fd;
+	pthread_mutex_t lock;
+	int packet_rx_drop_count;
+}g_uart_t;
 
 #define debugMsg(format, ...) fprintf(stderr, format, ## __VA_ARGS__)
 #define msleep(x) usleep(x*1000)
 char ip_addr[]=IPADDR;
 int portnumber = PORTNUM;
 g_data_t g_data;
+g_uart_t g_uart;
 
 
 
@@ -112,7 +138,241 @@ int do_recv(int client_sockfd ,char *buf,int len, int flag)
 	return glen;
 }
 
-do_initdata(){
+int do_open_uart()
+{
+	struct termios  config;
+	int fd;
+	
+	// Open serial port
+	// O_RDWR - Read and write
+	// O_NOCTTY - Ignore special chars like CTRL-C
+	fd = open(g_uart.name, O_RDWR|O_NOCTTY|O_NDELAY);
+	if (fd == -1){
+		debugMsg("open %s file error\n",g_uart.name);
+		goto err_fd;
+	}
+
+	fcntl(fd, F_SETFL, 0);
+	//fcntl(fd, F_SETFL, FNDELAY);
+	if(!isatty(fd))
+	{
+		fprintf(stderr, "\nERROR: file descriptor %d is NOT a serial port\n", fd);
+		goto err_check;
+	}
+	// Read file descritor configuration
+	if(tcgetattr(fd, &config) < 0)
+	{
+		fprintf(stderr, "\nERROR: could not read configuration of fd %d\n", fd);
+		goto err_check;
+	}
+
+	// Input flags - Turn off input processing
+	// convert break to null byte, no CR to NL translation,
+	// no NL to CR translation, don't mark parity errors or breaks
+	// no input parity check, don't strip high bit off,
+	// no XON/XOFF software flow control
+	config.c_iflag &= ~(IGNBRK | BRKINT | ICRNL |
+						INLCR | PARMRK | INPCK | ISTRIP | IXON);
+
+	// Output flags - Turn off output processing
+	// no CR to NL translation, no NL to CR-NL translation,
+	// no NL to CR translation, no column 0 CR suppression,
+	// no Ctrl-D suppression, no fill characters, no case mapping,
+	// no local output processing
+	config.c_oflag &= ~(OCRNL | ONLCR | ONLRET |
+						 ONOCR | OFILL | OPOST);
+
+	#ifdef OLCUC
+		config.c_oflag &= ~OLCUC;
+	#endif
+
+	#ifdef ONOEOT
+		config.c_oflag &= ~ONOEOT;
+	#endif
+
+	// No line processing:
+	// echo off, echo newline off, canonical mode off,
+	// extended input processing off, signal chars off
+	config.c_lflag &= ~(ECHO | ECHONL | ICANON | IEXTEN | ISIG);
+
+	// Turn off character processing
+	// clear current char size mask, no parity checking,
+	// no output processing, force 8 bit input
+	config.c_cflag &= ~(CSIZE | PARENB);
+	config.c_cflag |= CS8;
+
+	// One input byte is enough to return from read()
+	// Inter-character timer off
+	config.c_cc[VMIN]  = 1;
+	config.c_cc[VTIME] = 10; // was 0
+
+	// Get the current options for the port
+	////struct termios options;
+	////tcgetattr(fd, &options);
+
+	// Apply baudrate
+	switch (g_uart.baudrate)
+	{
+		case 1200:
+			if (cfsetispeed(&config, B1200) < 0 || cfsetospeed(&config, B1200) < 0)
+			{
+				fprintf(stderr, "\nERROR: Could not set desired baud rate of %d Baud\n", g_uart.baudrate);
+				goto err_check;
+			}
+			break;
+		case 1800:
+			cfsetispeed(&config, B1800);
+			cfsetospeed(&config, B1800);
+			break;
+		case 9600:
+			cfsetispeed(&config, B9600);
+			cfsetospeed(&config, B9600);
+			break;
+		case 19200:
+			cfsetispeed(&config, B19200);
+			cfsetospeed(&config, B19200);
+			break;
+		case 38400:
+			if (cfsetispeed(&config, B38400) < 0 || cfsetospeed(&config, B38400) < 0)
+			{
+				fprintf(stderr, "\nERROR: Could not set desired baud rate of %d Baud\n", g_uart.baudrate);
+				goto err_check;
+			}
+			break;
+		case 57600:
+			if (cfsetispeed(&config, B57600) < 0 || cfsetospeed(&config, B57600) < 0)
+			{
+				fprintf(stderr, "\nERROR: Could not set desired baud rate of %d Baud\n", g_uart.baudrate);
+				goto err_check;
+			}
+			break;
+		case 115200:
+			if (cfsetispeed(&config, B115200) < 0 || cfsetospeed(&config, B115200) < 0)
+			{
+				fprintf(stderr, "\nERROR: Could not set desired baud rate of %d Baud\n", g_uart.baudrate);
+				goto err_check;
+			}
+			break;
+
+		// These two non-standard (by the 70'ties ) rates are fully supported on
+		// current Debian and Mac OS versions (tested since 2010).
+		case 460800:
+			if (cfsetispeed(&config, B460800) < 0 || cfsetospeed(&config, B460800) < 0)
+			{
+				fprintf(stderr, "\nERROR: Could not set desired baud rate of %d Baud\n", g_uart.baudrate);
+				goto err_check;
+			}
+			break;
+		case 921600:
+			if (cfsetispeed(&config, B921600) < 0 || cfsetospeed(&config, B921600) < 0)
+			{
+				fprintf(stderr, "\nERROR: Could not set desired baud rate of %d Baud\n", g_uart.baudrate);
+				goto err_check;
+			}
+			break;
+		default:
+			fprintf(stderr, "ERROR: Desired baud rate %d could not be set, aborting.\n", g_uart.baudrate);
+			goto err_check;
+
+			break;
+	}
+
+	if( g_uart.parity ) config.c_cflag |= PARENB;
+	else config.c_cflag &= ~PARENB;
+
+	if( g_uart.stop_bits ) config.c_cflag |= CSTOPB;
+	else config.c_cflag &= ~CSTOPB;
+
+	//data_bits = 8
+	config.c_cflag &= ~CSIZE;
+	config.c_cflag |= CS8;
+	//hardware_control
+	if( g_uart.hardware_control ) config.c_cflag |= CRTSCTS;
+	else config.c_cflag &= ~CRTSCTS;
+
+	// Finally, apply the configuration
+	if(tcsetattr(fd, TCSAFLUSH, &config) < 0)
+	{
+		fprintf(stderr, "\nERROR: could not set configuration of fd %d\n", fd);
+		goto err_check;
+	}
+
+	debugMsg("open Uart %s OK \n",g_uart.name);
+	g_uart.fd = fd;
+	return 0;
+
+err_check:
+	close(fd);
+err_fd:
+	return -1;
+}
+int do_close_uart()
+{
+	if( g_uart.fd > 0 )
+		close(g_uart.fd);
+	return 0;
+}
+int do_read_mavlink_msg(mavlink_message_t *message)
+{
+	int result;
+	uint8_t cp;
+	mavlink_status_t status;
+	// Lock
+	pthread_mutex_lock(&g_uart.lock);
+	result = read(g_uart.fd, &cp, 1);
+	// Unlock
+	pthread_mutex_unlock(&g_uart.lock);
+
+	if (result > 0)
+	{
+		debugMsg("read data,,,\n");
+		// the parsing
+		result = mavlink_parse_char(MAVLINK_COMM_1, cp, message, &status);
+
+		// check for dropped packets
+		if ( (g_uart.packet_rx_drop_count != status.packet_rx_drop_count) )
+		{
+			printf("ERROR: DROPPED %d PACKETS\n", status.packet_rx_drop_count);
+			unsigned char v=cp;
+			fprintf(stderr,"head is %02x ", v);
+		}
+		g_uart.packet_rx_drop_count != status.packet_rx_drop_count;
+	}else
+	{
+		fprintf(stderr, "ERROR: Could not read from fd %d\n", g_uart.fd);
+	}
+	debugMsg("read message： msgid=%d,sysid=%d,compid=%d\n",message->msgid,message->sysid,message->compid);
+
+	return result>0?0:-1;
+}
+void do_write_mavlink_msg(mavlink_message_t *message)
+{
+	char buf[300];
+	// Translate message to buffer
+	unsigned len = mavlink_msg_to_send_buffer((uint8_t*)buf, message);
+	// Lock
+	pthread_mutex_lock(&g_uart.lock);
+	// Write packet via serial link
+	write(g_uart.fd, buf, len);
+	// Wait until all data has been written
+	tcdrain(g_uart.fd);
+	// Unlock
+	pthread_mutex_unlock(&g_uart.lock);
+	return;
+}
+
+void do_write_raw(char *data, int len)
+{
+	pthread_mutex_lock(&g_uart.lock);
+	// Write packet via serial link
+	write(g_uart.fd, data, len);
+	// Wait until all data has been written
+	tcdrain(g_uart.fd);
+	// Unlock
+	pthread_mutex_unlock(&g_uart.lock);
+}
+
+void do_initdata(){
 	int i;
 	g_data.need_close = 0;
 
@@ -125,6 +385,20 @@ do_initdata(){
 	g_data.need_write_thread_quit = 0;
 	g_data.read_thread_id = 0;
 	g_data.write_thread_id = 0;
+
+	g_data.thread_status = 0;
+	pthread_mutex_init(&g_data.mutex,NULL);
+
+
+	sprintf(g_uart.name,"%s",UART_NAME);
+	g_uart.baudrate = BAUDRATE;
+	g_uart.data_bits = DATA_BITS;
+	g_uart.stop_bits = STOP_BITS;
+	g_uart.parity = PARITY;
+	g_uart.hardware_control = HARDWARE_CONTROL;
+	g_uart.fd = -1;
+	pthread_mutex_init(&g_uart.lock,NULL);
+
 }
 
 void do_service(struct sockaddr_in *client_addr,int client_sockfd)
@@ -192,18 +466,36 @@ void quit_handler( int sig )
 	do_release_socket();
 	do_release_thread();
 
+	do_close_uart();
+
 	// end program here
 	printf("Ruan: exit by ctrl-c\n");
 	exit(0);
 
 }
 
+int is_thread_running()
+{
+	if( (g_data.thread_status & 0x1)==0x1 ||  (g_data.thread_status & 0x2)==0x2 )
+		return 1;
+	return 0;
+}
+void set_thread_status(int bit_mask,int val)
+{
+	pthread_mutex_lock(&g_data.mutex);
+	if( val == 1)
+		g_data.thread_status |= bit_mask;
+	else 
+		g_data.thread_status &= ~bit_mask;
+	pthread_mutex_unlock(&g_data.mutex);
+}
 int need_response=0;
 void* recive_msg_thread_worker(void *args)
 {
 	int len;
 	char buf[1024];
-
+	
+	set_thread_status(0x2,1);
 	while(!g_data.need_read_thread_quit){
 		bzero(buf,1024);
 		len = do_recv(g_data.client_sockfd ,buf, 1024, 0);
@@ -222,28 +514,39 @@ void* recive_msg_thread_worker(void *args)
 	}
 	g_data.need_read_thread_quit = 1;
 	g_data.need_write_thread_quit = 1;
+	set_thread_status(0x2,0);
 	debugMsg("recive_msg_thread_worker exit\n");
 }
 void* send_msg_thread_worker(void *args)
 {
 	int len;
 	char buf[1024];
+	mavlink_message_t message;
 
 	bzero(buf,1024);
 	sprintf(buf,"OK");
+	set_thread_status(0x1,1);
 	while(!g_data.need_write_thread_quit){
+		do_read_mavlink_msg(&message);
 		if( need_response ){
 			len = do_write(g_data.client_sockfd,buf, 1024);
+			if( len < 0 )
+				break;
 			need_response = 0;
 		}
-		msleep(200);
+		msleep(70);
 	}
+	g_data.need_read_thread_quit = 1;
+	g_data.need_write_thread_quit = 1;
+	set_thread_status(0x1,0);
 	debugMsg("send_msg_thread_worker exit\n");
 }
 int do_creat_thread()
 {
 	int res ;
 	
+	g_data.need_read_thread_quit = 0;
+	g_data.need_write_thread_quit = 0;
 	res= pthread_create( &g_data.read_thread_id, NULL, &recive_msg_thread_worker, &g_data );
 	if( res != 0)
 		goto thread_err;
@@ -263,6 +566,7 @@ int main(int argc, char *argv[])
 {
 
         int sin_size;
+	int tmp_sock;
 
         if(argc!=3 || atoi(argv[2])<0)
         {
@@ -272,6 +576,10 @@ int main(int argc, char *argv[])
 
 	do_initdata();
 	signal(SIGINT,quit_handler);
+	if( 0 > do_open_uart() ){
+		debugMsg("open uart %s error \n",g_uart.name);
+		return -1;
+	};
 
         /* 服务器端开始建立socket描述符 */
         if((g_data.sockfd=socket(AF_INET,SOCK_STREAM,0))==-1)  
@@ -294,7 +602,7 @@ int main(int argc, char *argv[])
         }
 
         /* 监听sockfd描述符  */
-        if(listen(g_data.sockfd,CLIENTNUM-1)==-1)
+        if(listen(g_data.sockfd,CLIENTNUM)==-1)
         {
                 fprintf(stderr,"TcpToUart Server Listen error:%s\n\a",strerror(errno));
 		goto listen_error;
@@ -303,26 +611,31 @@ int main(int argc, char *argv[])
 
         while(!g_data.need_close)
         {
-		debugMsg("Wait for client ...\n");
+		debugMsg("socket %d Wait for client ...\n",g_data.sockfd);
 
                 /* 服务器阻塞,直到客户程序建立连接  */
                 sin_size=sizeof(struct sockaddr_in);
-		g_data.client_sockfd = accept(g_data.sockfd,(struct sockaddr *)(&g_data.client_addr),&sin_size);
-                if(g_data.client_sockfd != -1)
+		tmp_sock = accept(g_data.sockfd,(struct sockaddr *)(&g_data.client_addr),&sin_size);
+                if(tmp_sock != -1)
                 {
+			if( is_thread_running() ){//has connected a client
+				debugMsg("thread is running , close new clinet\n");
+				close(tmp_sock);
+				continue;
+			}else{
+				debugMsg("no clinet servering, creat thread for new clinet\n");
+				if( g_data.client_sockfd != 0 ) 
+					close(g_data.client_sockfd);
+				g_data.client_sockfd = tmp_sock;
+				do_creat_thread();
+				sleep(3);
+				//do_wait_thread();
+			}
 			//do_service(&g_data.client_addr,g_data.client_sockfd);
-			do_creat_thread();
-			do_wait_thread();
                 }else{
-                        fprintf(stderr,"TcpToUart Accept error:%s,retry ...\n\a",strerror(errno));
+                        fprintf(stderr,"TcpToUart Accept error:%s, sockfd=%d,retry ...\n\a",strerror(errno),g_data.sockfd);
+			continue;
 		}
-
-		//init , ready to accept the new client
-		debugMsg("reinit for next client\n");
-		g_data.need_read_thread_quit = 0;
-		g_data.need_write_thread_quit = 0;
-		close(g_data.client_sockfd);
-		g_data.client_sockfd = 0;
         }
 
         //close(g_data.sockfd);
