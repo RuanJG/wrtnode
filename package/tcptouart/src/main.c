@@ -20,12 +20,12 @@
 #include <common/mavlink.h>
 
 
-#define PORTNUM 6666
+#define PORTNUM 6667
 //#define IPADDR "192.168.8.1"
-#define IPADDR "10.0.2.15"
+#define IPADDR "192.168.56.101"
 #define CLIENTNUM 10
 #define UART_NAME "/dev/ttyUSB0"
-#define BAUDRATE  115200
+#define BAUDRATE  57600 
 #define DATA_BITS  8
 #define STOP_BITS  1
 #define PARITY  0
@@ -64,7 +64,7 @@ typedef struct __g_uart_t{
 
 #define debugMsg(format, ...) fprintf(stderr, format, ## __VA_ARGS__)
 #define msleep(x) usleep(x*1000)
-char ip_addr[]=IPADDR;
+char ip_addr[32];
 int portnumber = PORTNUM;
 g_data_t g_data;
 g_uart_t g_uart;
@@ -80,53 +80,74 @@ int do_write(int fd,void *buffer,int length)
 	ptr=buffer;
 	bytes_left=length;
 
-	while(bytes_left>0)
+/*
+	while(0 && bytes_left>0)
 	{
-        /* 开始写*/
         	written_bytes=write(fd,ptr,bytes_left);
-        	if(written_bytes<=0)/* 出错了*/
+        	if(written_bytes<=0)
         	{       
-                	if(errno==EINTR) /* 中断错误 我们继续写*/
-                        	written_bytes=0;
-                	else /* 其他错误 没有办法,只好撤退了*/
+                	if(errno==EINTR) 
+                        	break;//written_bytes=0;
+                	else 
                         	return(-1);
         	}
         	bytes_left-=written_bytes;
-        	ptr+=written_bytes;     /* 从剩下的地方继续写  */
+        	ptr+=written_bytes;     
 	}
+
+*/
+	written_bytes = write(fd,buffer,length);
+	if( written_bytes <0 ){
+		debugMsg("write sockfd error , %s\n",strerror(errno));
+		return -1;
+	}else if( written_bytes == 0){
+		debugMsg("write sockfd error client lost?\n");
+		return -1;
+	}else{
+		//if( written_bytes < length )
+			debugMsg("write sockfd %d of %d\n",written_bytes,length);
+		return written_bytes;
+	}
+
 	return(length-bytes_left);
 }
-int do_read(int fd,void *buffer,int length)
+int do_read(int client_sockfd,void *buf,int len)
 {
-	int bytes_left;
-	int bytes_read;
-	char *ptr = buffer;
-   
-	bytes_left=length;
-	while(bytes_left>0)
-	{
-   		bytes_read=read(fd,ptr,bytes_read);
-   		if(bytes_read<0)
-   		{
-		     if(errno==EINTR)
-		        bytes_read=0;
-		     else
-		        return(-1);
-   		}else if(bytes_read==0)
-       			break;
-		bytes_left-=bytes_read;
-		ptr+=bytes_read;
+	int glen;
+	int retry = 1;
+
+	for( retry; retry >0 ; retry--){
+		glen = read(client_sockfd,buf,len);
+		/*
+		if( glen < 0 ){
+			if(glen == EINTR )
+				continue;
+			else
+				return -1;
+		}else
+			break;
+		*/
+		if( glen < 0){
+			debugMsg("read sockfd error , %s\n",strerror(errno));
+			return -1;
+		}else if( glen == 0){
+			debugMsg("read sockfd error client lost?\n");
+			return -1;
+		}else{
+			//debugMsg("read sockfd byte %d\n",glen);
+			return glen;
+		}
 	}
-	return(length-bytes_left);
+	return glen;
 }
 
-int do_recv(int client_sockfd ,char *buf,int len, int flag)
+int do_recv(int client_sockfd ,char *buf,int len)
 {
 	int glen;
 	int retry = 5;
 
 	for( retry; retry >0 ; retry--){
-		glen = recv(client_sockfd,buf,len,flag);
+		glen = recv(client_sockfd,buf,len,0);
 		if( glen < 0 ){
 			if(glen == EINTR )
 				continue;
@@ -152,7 +173,7 @@ int do_open_uart()
 		goto err_fd;
 	}
 
-	fcntl(fd, F_SETFL, 0);
+	//fcntl(fd, F_SETFL, 0);
 	//fcntl(fd, F_SETFL, FNDELAY);
 	if(!isatty(fd))
 	{
@@ -245,6 +266,7 @@ int do_open_uart()
 				fprintf(stderr, "\nERROR: Could not set desired baud rate of %d Baud\n", g_uart.baudrate);
 				goto err_check;
 			}
+			debugMsg("user 57600 \n");
 			break;
 		case 115200:
 			if (cfsetispeed(&config, B115200) < 0 || cfsetospeed(&config, B115200) < 0)
@@ -333,15 +355,13 @@ int do_read_mavlink_msg(mavlink_message_t *message)
 		if ( (g_uart.packet_rx_drop_count != status.packet_rx_drop_count) )
 		{
 			printf("ERROR: DROPPED %d PACKETS\n", status.packet_rx_drop_count);
-			unsigned char v=cp;
-			fprintf(stderr,"head is %02x ", v);
+			fprintf(stderr,"head is %02x ", cp);
 		}
+		debugMsg("read message：head is %02x msgid=%d,sysid=%d,compid=%d\n",cp,message->msgid,message->sysid,message->compid);
 		g_uart.packet_rx_drop_count != status.packet_rx_drop_count;
-	}else
-	{
+	}else{
 		fprintf(stderr, "ERROR: Could not read from fd %d\n", g_uart.fd);
 	}
-	debugMsg("read message： msgid=%d,sysid=%d,compid=%d\n",message->msgid,message->sysid,message->compid);
 
 	return result>0?0:-1;
 }
@@ -361,15 +381,30 @@ void do_write_mavlink_msg(mavlink_message_t *message)
 	return;
 }
 
-void do_write_raw(char *data, int len)
+int do_write_uart_raw(char *data, int len)
 {
+	int res =0;
+
 	pthread_mutex_lock(&g_uart.lock);
 	// Write packet via serial link
-	write(g_uart.fd, data, len);
+	res = write(g_uart.fd, data, len);
 	// Wait until all data has been written
 	tcdrain(g_uart.fd);
 	// Unlock
 	pthread_mutex_unlock(&g_uart.lock);
+
+	return res;
+}
+
+int do_read_uart_raw(char *data, int len)
+{
+	int result;
+	// Lock
+	pthread_mutex_lock(&g_uart.lock);
+	result = read(g_uart.fd, data, len);
+	// Unlock
+	pthread_mutex_unlock(&g_uart.lock);
+	return result;
 }
 
 void do_initdata(){
@@ -386,6 +421,9 @@ void do_initdata(){
 	g_data.read_thread_id = 0;
 	g_data.write_thread_id = 0;
 
+	portnumber = PORTNUM;
+	sprintf(ip_addr,"%s",IPADDR);
+
 	g_data.thread_status = 0;
 	pthread_mutex_init(&g_data.mutex,NULL);
 
@@ -401,30 +439,6 @@ void do_initdata(){
 
 }
 
-void do_service(struct sockaddr_in *client_addr,int client_sockfd)
-{
-	char buf[100];
-	int len;
-	int ret;
-	fprintf(stderr,"Server get connection from %s\n",inet_ntoa(client_addr->sin_addr));
-
-	while(!g_data.need_close)
-	{
-		//len = do_read(client_sockfd,buf,1);
-		bzero(buf,100);
-		len = recv(client_sockfd,buf, 100, 0);
-		if( len > 0 ){
-			debugMsg("Client #> %s\n",buf);
-			ret = do_write(client_sockfd,buf,len);
-			if( ret != len )
-				debugMsg("write not complie !!!\n");
-			if(0 == strcmp(buf,"exit") )
-				g_data.need_close = 1;
-		}
-	}
-        /* 这个通讯已经结束     */
-        close(client_sockfd);
-}
 
 void do_release_client_socket()
 {
@@ -463,8 +477,8 @@ void quit_handler( int sig )
 	printf("TERMINATING AT USER REQUEST\n");
 	printf("\n");
 		
-	do_release_socket();
 	do_release_thread();
+	do_release_socket();
 
 	do_close_uart();
 
@@ -476,9 +490,15 @@ void quit_handler( int sig )
 
 int is_thread_running()
 {
+	int ret = 0;
+
+	pthread_mutex_lock(&g_data.mutex);
+
 	if( (g_data.thread_status & 0x1)==0x1 ||  (g_data.thread_status & 0x2)==0x2 )
-		return 1;
-	return 0;
+		ret = 1;
+
+	pthread_mutex_unlock(&g_data.mutex);
+	return ret ;
 }
 void set_thread_status(int bit_mask,int val)
 {
@@ -492,24 +512,28 @@ void set_thread_status(int bit_mask,int val)
 int need_response=0;
 void* recive_msg_thread_worker(void *args)
 {
-	int len;
+	int len,i;
 	char buf[1024];
 	
 	set_thread_status(0x2,1);
 	while(!g_data.need_read_thread_quit){
-		bzero(buf,1024);
-		len = do_recv(g_data.client_sockfd ,buf, 1024, 0);
-		if( len == 0 ){
-			// get 0 data ,maybe error;
-		}else if( len < 0 ){
+		//bzero(buf,1024);
+		len = do_read(g_data.client_sockfd ,buf, 1024);
+		if( len < 0 ){
 			debugMsg("Client connect error, exit !!\n");
 			break;
+		}else if( len == 0){
+			;//no data to deal;
 		}else{
-			debugMsg("Client#> %s, len =%d\n",buf,len);
-			if( 0 == strcmp(buf,"exit") ){
-				break;
+			/*
+			debugMsg("recive msg: \n");
+			for(i=0 ;i< len ; i++)
+				debugMsg("%x, ",buf[i]);
+			*/
+			if( 0 > do_write_uart_raw(buf,len) ){
+				debugMsg("write uart error \n");
+				fprintf(stderr,"TcpToUart  error:%s\n\a",strerror(errno));
 			}
-			need_response = 1;
 		}
 	}
 	g_data.need_read_thread_quit = 1;
@@ -519,22 +543,48 @@ void* recive_msg_thread_worker(void *args)
 }
 void* send_msg_thread_worker(void *args)
 {
-	int len;
+	int len,len_msg;
 	char buf[1024];
 	mavlink_message_t message;
+	char *ptr;
+	int i;
+
+	fd_set fdsr;
 
 	bzero(buf,1024);
 	sprintf(buf,"OK");
 	set_thread_status(0x1,1);
+
+	tcflush(g_uart.fd, TCIOFLUSH);
+
 	while(!g_data.need_write_thread_quit){
-		do_read_mavlink_msg(&message);
-		if( need_response ){
-			len = do_write(g_data.client_sockfd,buf, 1024);
-			if( len < 0 )
+		//do_read_mavlink_msg(&message);
+		len_msg = do_read_uart_raw(buf,1024);
+		if( len_msg > 0)
+		{
+		#if 0
+			//ptr = (char *) &message;
+			debugMsg("get a message, len=%d,max len=%d: \n",len_msg,(int)sizeof(mavlink_message_t));
+			for(i=0 ; i<len_msg; i++) 
+			{
+				debugMsg("%2x,",buf[i]);
+			}
+			debugMsg("\n");
+		#endif
+			len = do_write(g_data.client_sockfd,buf, len_msg);
+			//len = send(g_data.client_sockfd,buf, len_msg, 0);
+			if( len < 0 ){
+				debugMsg("send msg failse %d, may be client leave\n",len);
 				break;
-			need_response = 0;
+			}
+
+		}else if(len_msg == 0){
+			debugMsg("read no data from uart result %d\n",len_msg);
+		}else{
+			//debugMsg("read uart len =%d, error %d !!!!!\n",len_msg,errno);
+			//fprintf(stderr,"TcpToUart  error:%s\n\a",strerror(errno));
 		}
-		msleep(70);
+		//msleep(70);
 	}
 	g_data.need_read_thread_quit = 1;
 	g_data.need_write_thread_quit = 1;
@@ -568,14 +618,18 @@ int main(int argc, char *argv[])
         int sin_size;
 	int tmp_sock;
 
-        if(argc!=3 || atoi(argv[2])<0)
-        {
-                fprintf(stderr,"TcpToUart  Usage:%s addr portnumber, now use default  %s:%d\a\n",argv[0],ip_addr,portnumber);
-        }
-
-
 	do_initdata();
+        if(argc==3 && atoi(argv[2])>0)
+        {
+		portnumber = atoi(argv[2]);
+		sprintf(ip_addr,"%s",argv[1]);
+	}else{
+                fprintf(stderr,"TcpToUart  Usage:%s ip port \n",argv[0]);
+        }
+        debugMsg("TcpToUart  Use addr,portnumber= %s:%d\a\n",ip_addr,portnumber);
+
 	signal(SIGINT,quit_handler);
+
 	if( 0 > do_open_uart() ){
 		debugMsg("open uart %s error \n",g_uart.name);
 		return -1;
@@ -619,9 +673,17 @@ int main(int argc, char *argv[])
                 if(tmp_sock != -1)
                 {
 			if( is_thread_running() ){//has connected a client
+				/*
 				debugMsg("thread is running , close new clinet\n");
 				close(tmp_sock);
 				continue;
+				*/
+				debugMsg("thread is running , connect new clinet\n");
+				do_release_thread();
+				close(g_data.client_sockfd);
+				g_data.client_sockfd = tmp_sock;
+				do_creat_thread();
+				sleep(1);
 			}else{
 				debugMsg("no clinet servering, creat thread for new clinet\n");
 				if( g_data.client_sockfd != 0 ) 
@@ -647,5 +709,6 @@ listen_error:
 	close(g_data.sockfd);
 bind_error:
 socket_error:
+	do_close_uart();
 	exit(1);
 }
