@@ -5,14 +5,10 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <sys/types.h>
-#include <arpa/inet.h>
 #include <signal.h>
 #include <time.h>
 #include <sys/time.h>
 #include <pthread.h>
-#include <wait.h>
 
 #include <termios.h>
 #include <fcntl.h>   // File control definitions

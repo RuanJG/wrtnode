@@ -19,6 +19,7 @@ define Package/tcptouart
 	SECTION:=utils
 	CATEGORY:=Utilities
 	TITLE:=TcptoUart -- for tcp uart user
+	DEPENDS:=+libc +libpthread
 endef
 # Uncomment portion below for Kamikaze and delete DESCRIPTION variable above
 define Package/tcptouart/description
@@ -45,6 +46,8 @@ endef
 # command to copy the binary file from its current location (in our case the build
 # directory) to the install directory.
 define Package/tcptouart/install
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) ./files/tcptouart.sh $(1)/etc/init.d/tcptouartd
 	$(INSTALL_DIR) $(1)/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/tcptouart $(1)/bin/
 endef
