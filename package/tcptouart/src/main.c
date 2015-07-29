@@ -17,7 +17,7 @@
 #include <termios.h>
 #include <fcntl.h>   // File control definitions
 
-#include <common/mavlink.h>
+//#include <common/mavlink.h>
 
 
 #define PORTNUM 6666
@@ -343,6 +343,7 @@ int do_close_uart()
 		close(g_uart.fd);
 	return 0;
 }
+/*
 int do_read_mavlink_msg(mavlink_message_t *message)
 {
 	int result;
@@ -389,7 +390,7 @@ void do_write_mavlink_msg(mavlink_message_t *message)
 	pthread_mutex_unlock(&g_uart.lock);
 	return;
 }
-
+*/
 int do_write_uart_raw(char *data, int len)
 {
 	int res =0;
@@ -586,7 +587,7 @@ void* send_msg_thread_worker(void *args)
 {
 	int len,len_msg;
 	char buf[1024];
-	mavlink_message_t message;
+	//mavlink_message_t message;
 	char *ptr;
 	int i,ret;
 
