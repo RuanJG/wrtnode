@@ -5,3 +5,15 @@
 # Internal uci firewall chains are flushed and recreated on reload, so
 # put custom rules into the root chains e.g. INPUT or FORWARD or into the
 # special user chains, e.g. input_wan_rule or postrouting_lan_rule.
+
+
+#wan:6666 ==> lan:6666
+iptables -t nat -I PREROUTING -p tcp --dport 6666 -j DNAT --to 192.168.2.1:6666
+iptables -I FORWARD -p tcp -d 192.168.2.1 --dport 6666 -j ACCEPT
+
+iptables -t nat -I PREROUTING -p tcp --dport 8080 -j DNAT --to 192.168.2.201:80
+iptables -I FORWARD -p tcp -d 192.168.2.201 --dport 8080 -j ACCEPT
+
+iptables -t nat -I PREROUTING -p tcp --dport 8081 -j DNAT --to 192.168.2.1:80
+iptables -I FORWARD -p tcp -d 192.168.2.1 --dport 8081 -j ACCEPT
+
