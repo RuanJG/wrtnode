@@ -77,22 +77,6 @@ int do_write(int fd,void *buffer,int length)
 	ptr=buffer;
 	bytes_left=length;
 
-/*
-	while(0 && bytes_left>0)
-	{
-        	written_bytes=write(fd,ptr,bytes_left);
-        	if(written_bytes<=0)
-        	{       
-                	if(errno==EINTR) 
-                        	break;//written_bytes=0;
-                	else 
-                        	return(-1);
-        	}
-        	bytes_left-=written_bytes;
-        	ptr+=written_bytes;     
-	}
-	return(length-bytes_left);
-*/
 	retry  = 5;
 	while(retry-- > 0){
 		written_bytes = write(fd,buffer,length);
@@ -120,15 +104,6 @@ int do_read(int client_sockfd,void *buf,int len)
 
 	for( retry; retry >0 ; retry--){
 		glen = read(client_sockfd,buf,len);
-		/*
-		if( glen < 0 ){
-			if(glen == EINTR )
-				continue;
-			else
-				return -1;
-		}else
-			break;
-		*/
 		if( glen < 0){
 			if(glen == EINTR || glen == EWOULDBLOCK || glen == EAGAIN)
 				debugMsg("read sockfd failse> %s ; maybe network interupt, retry\n",strerror(errno));
@@ -417,7 +392,7 @@ void do_initdata(){
 	int i;
 	g_data.need_close = 0;
 
-	g_data.sockfd = 0;
+	g_data.sockfd = -1;
 	g_data.client_sockfd = 0;
 	bzero(&g_data.server_addr,sizeof(struct sockaddr_in));
 	bzero(&g_data.client_addr,sizeof(struct sockaddr_in));
@@ -450,13 +425,13 @@ void do_release_client_socket()
 {
 	if( g_data.client_sockfd > 0 )
 		close(g_data.client_sockfd);
-	g_data.client_sockfd = 0;
+	g_data.client_sockfd = -1;
 }
 void do_release_server_socket()
 {
 	if( g_data.sockfd > 0 )
 		close(g_data.sockfd);
-	g_data.sockfd = 0;
+	g_data.sockfd = -1;
 }
 void do_release_socket(){
 	do_release_client_socket();
@@ -464,8 +439,12 @@ void do_release_socket(){
 }
 void do_wait_thread()
 {
-	pthread_join(g_data.read_thread_id,NULL);
-	pthread_join(g_data.write_thread_id,NULL);
+	if( g_data.read_thread_id > 0 )
+		pthread_join(g_data.read_thread_id,NULL);
+	if( g_data.write_thread_id > 0 )
+		pthread_join(g_data.write_thread_id,NULL);
+	g_data.write_thread_id = 0;
+	g_data.read_thread_id = 0;
 }
 void do_release_thread()
 {
@@ -661,6 +640,40 @@ thread_err:
 	g_data.write_thread_id = 0;
 	return -1;
 }
+
+int do_creat_service_socket()
+{
+        /* 服务器端开始建立socket描述符 */
+        if((g_data.sockfd=socket(AF_INET,SOCK_STREAM,0))==-1)  
+        {
+                fprintf(stderr,"TcpToUart Socket error:%s\n\a",strerror(errno));
+		return -1;
+        }
+
+        /* 服务器端填充 sockaddr结构  */ 
+        bzero(&g_data.server_addr,sizeof(struct sockaddr_in));
+        g_data.server_addr.sin_family=AF_INET;
+        g_data.server_addr.sin_addr.s_addr= inet_addr(ip_addr);//htonl(INADDR_ANY);
+        g_data.server_addr.sin_port=htons(portnumber);
+
+        /* 捆绑sockfd描述符  */ 
+        if(bind(g_data.sockfd,(struct sockaddr *)(&g_data.server_addr),sizeof(struct sockaddr))==-1)
+        {
+                fprintf(stderr,"TcpToUart Bind Server Sockfd error:%s\n\a",strerror(errno));
+		return -1;
+        }
+
+        /* 监听sockfd描述符  */
+        if(listen(g_data.sockfd,CLIENTNUM)==-1)
+        {
+                fprintf(stderr,"TcpToUart Server Listen error:%s\n\a",strerror(errno));
+		close(g_data.sockfd);
+		g_data.sockfd = -1;
+		return -1;
+        }
+	return 0;
+
+}
 int main(int argc, char *argv[])
 {
 
@@ -683,45 +696,26 @@ int main(int argc, char *argv[])
 	}
         debugMsg("TcpToUart  serial = %s %d\n",g_uart.name,g_uart.baudrate);
 
-	signal(SIGINT,quit_handler);
 
 	if( 0 > do_open_uart() ){
 		debugMsg("open uart %s error \n",g_uart.name);
 		return -1;
 	};
+	signal(SIGINT,quit_handler);
 
-        /* 服务器端开始建立socket描述符 */
-        if((g_data.sockfd=socket(AF_INET,SOCK_STREAM,0))==-1)  
-        {
-                fprintf(stderr,"TcpToUart Socket error:%s\n\a",strerror(errno));
-		goto socket_error;
-        }
-
-        /* 服务器端填充 sockaddr结构  */ 
-        //bzero(&server_addr,sizeof(struct sockaddr_in));
-        g_data.server_addr.sin_family=AF_INET;
-        g_data.server_addr.sin_addr.s_addr= inet_addr(ip_addr);//htonl(INADDR_ANY);
-        g_data.server_addr.sin_port=htons(portnumber);
-
-        /* 捆绑sockfd描述符  */ 
-        if(bind(g_data.sockfd,(struct sockaddr *)(&g_data.server_addr),sizeof(struct sockaddr))==-1)
-        {
-                fprintf(stderr,"TcpToUart Bind Server Sockfd error:%s\n\a",strerror(errno));
-		goto bind_error;
-        }
-
-        /* 监听sockfd描述符  */
-        if(listen(g_data.sockfd,CLIENTNUM)==-1)
-        {
-                fprintf(stderr,"TcpToUart Server Listen error:%s\n\a",strerror(errno));
-		goto listen_error;
-        }
 
 
         while(!g_data.need_close)
         {
-		debugMsg("socket %d Wait for client ...\n",g_data.sockfd);
+		if( g_data.sockfd <= 0 ){
+			if( do_creat_service_socket() < 0 ){
+				debugMsg("creat socket failse, Waiting and retry  ...\n");
+				sleep(1);
+				continue;
+			}
+		}
 
+		debugMsg("socket %d Wait for client ...\n",g_data.sockfd);
                 /* 服务器阻塞,直到客户程序建立连接  */
                 sin_size=sizeof(struct sockaddr_in);
 		tmp_sock = accept(g_data.sockfd,(struct sockaddr *)(&g_data.client_addr),&sin_size);
@@ -742,16 +736,15 @@ int main(int argc, char *argv[])
 				#endif
 			}else{
 				debugMsg("no clinet servering, creat thread for new clinet\n");
-				if( g_data.client_sockfd != 0 ) 
-					close(g_data.client_sockfd);
+				do_release_client_socket();
 				g_data.client_sockfd = tmp_sock;
 				do_creat_thread();
 				sleep(1);
-				//do_wait_thread();
 			}
-			//do_service(&g_data.client_addr,g_data.client_sockfd);
                 }else{
-                        fprintf(stderr,"TcpToUart Accept error:%s, sockfd=%d,retry ...\n\a",strerror(errno),g_data.sockfd);
+                        fprintf(stderr,"TcpToUart Accept error:%s, recreat sockfd\n",strerror(errno));
+			do_release_thread();
+			do_release_socket();
 			continue;
 		}
         }
