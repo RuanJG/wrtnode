@@ -1,22 +1,41 @@
-# Copyright (C) 2006 OpenWrt.org
 
-config interface loopback
-	option ifname	lo
-	option proto	static
-	option ipaddr	127.0.0.1
-	option netmask	255.0.0.0
+config interface 'loopback'
+	option ifname 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
 
-config interface lan
-	option ifname	eth0
-	option type 	bridge
-	option proto	static
-	option ipaddr	192.168.1.1
-	option netmask	255.255.255.0
-	option ip6assign 60
+config globals 'globals'
+	option ula_prefix 'fdf9:7740:8869::/48'
 
-config interface wan6
-	option ifname	@wan
-	option proto	dhcpv6
+config interface 'lan'
+	option ifname 'eth0.1'
+	option force_link '1'
+	option type 'bridge'
+	option proto 'static'
+	option ipaddr '192.168.2.1'
+	option netmask '255.255.255.0'
+	option macaddr '64:51:7e:80:1c:e6'
 
-config globals globals
-	option ula_prefix auto
+config interface 'wan'
+	option ifname 'apcli0'
+	option proto 'static'
+	option ipaddr '192.168.1.108'
+	option netmask '255.255.255.0'
+	option macaddr '64:51:7e:80:1c:e7'
+
+config switch
+	option name 'switch0'
+	option reset '1'
+	option enable_vlan '1'
+
+config switch_vlan
+	option device 'switch0'
+	option vlan '1'
+	option ports '1 2 3 4 6t'
+
+config switch_vlan
+	option device 'switch0'
+	option vlan '2'
+	option ports '0 6t'
+
