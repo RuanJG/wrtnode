@@ -1,4 +1,6 @@
 config system
+	option 'conloglevel' '1'
+	option 'kconloglevel' '1'
 	option hostname	OpenWrt
 	option timezone	UTC
 
