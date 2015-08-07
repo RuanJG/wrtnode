@@ -47,9 +47,14 @@ endef
 # directory) to the install directory.
 define Package/tcptouart/install
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/tcptouart.sh $(1)/etc/init.d/tcptouartd
+	$(INSTALL_BIN) ./files/myserverd $(1)/etc/init.d/myserverd
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_BIN) ./files/network $(1)/etc/config/network
+	$(INSTALL_BIN) ./files/wireless $(1)/etc/config/wireless
 	$(INSTALL_DIR) $(1)/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/tcptouart $(1)/bin/
+	$(INSTALL_BIN) ./files/setgateway.sh $(1)/bin/
+	$(INSTALL_BIN) ./files/tcptouart.sh $(1)/bin/
 endef
 # This line executes the necessary commands to compile our program.
 # The above define directives specify all the information needed, but this

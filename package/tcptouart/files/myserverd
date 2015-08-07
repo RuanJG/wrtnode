@@ -1,0 +1,16 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2006-2011 OpenWrt.org
+
+START=99
+USE_PROCD=1
+
+start_service() {
+	/bin/setgateway.sh &
+	/bin/tcptouart.sh &
+}
+stop_service() {
+        echo "stop my server"
+	killall setgateway.sh
+        killall tcptouart.sh tcptouart
+}
+

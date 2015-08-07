@@ -1,18 +1,16 @@
-#!/bin/sh /etc/rc.common
-# Copyright (C) 2006-2011 OpenWrt.org
+#!/bin/sh
+uart_name='/dev/ttyS0'
 
-START=99
-USE_PROCD=1
-
-start_service() {
-	local ip=$(ifconfig br-lan  | grep 'inet addr')
+while [ '1' == '1' ]
+do
+	ip=$(ifconfig br-lan  | grep 'inet addr')
 	ip=${ip#*'inet addr:'}
 	ip=${ip%' Bcast:'*}
-        echo "start tcpuart server, in $ip"
-        /bin/tcptouart $ip 6666 /dev/ttyUSB0 57600 &
-}
-stop_service() {
-        echo "stop tcpuart server"
-        killall tcptouart
-}
-
+	if [ "$ip"'x' == 'x' ];then
+		echo can not find ip in br-lan
+	else
+        	echo "start tcpuart server, in $ip"
+        	/bin/tcptouart $ip 6666 $uart_name 57600
+	fi
+	sleep 1
+done

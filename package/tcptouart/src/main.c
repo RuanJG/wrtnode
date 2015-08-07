@@ -13,7 +13,7 @@
 #include <termios.h>
 #include <fcntl.h>   // File control definitions
 
-//#include <common/mavlink.h>
+#include <common/mavlink.h>
 
 
 #define PORTNUM 6666
@@ -314,54 +314,51 @@ int do_close_uart()
 		close(g_uart.fd);
 	return 0;
 }
-/*
-int do_read_mavlink_msg(mavlink_message_t *message)
+int do_read_uart_mavlink_msg(g_uart_t *uart, mavlink_message_t *message)
 {
 	int result;
 	uint8_t cp;
 	mavlink_status_t status;
 	// Lock
-	pthread_mutex_lock(&g_uart.lock);
-	result = read(g_uart.fd, &cp, 1);
+	pthread_mutex_lock(&uart->lock);
+	result = read(uart->fd, &cp, 1);
 	// Unlock
-	pthread_mutex_unlock(&g_uart.lock);
+	pthread_mutex_unlock(&uart->lock);
 
 	if (result > 0)
 	{
-		debugMsg("read data,,,\n");
-		// the parsing
 		result = mavlink_parse_char(MAVLINK_COMM_1, cp, message, &status);
-
 		// check for dropped packets
-		if ( (g_uart.packet_rx_drop_count != status.packet_rx_drop_count) )
+		if ( (uart->packet_rx_drop_count != status.packet_rx_drop_count) )
 		{
-			printf("ERROR: DROPPED %d PACKETS\n", status.packet_rx_drop_count);
+			debugMsg("ERROR: DROPPED %d PACKETS\n", status.packet_rx_drop_count);
 			fprintf(stderr,"head is %02x ", cp);
 		}
 		debugMsg("read message：head is %02x msgid=%d,sysid=%d,compid=%d\n",cp,message->msgid,message->sysid,message->compid);
-		g_uart.packet_rx_drop_count != status.packet_rx_drop_count;
+		uart->packet_rx_drop_count != status.packet_rx_drop_count;
+
+		return result>0?1:0;
 	}else{
-		fprintf(stderr, "ERROR: Could not read from fd %d\n", g_uart.fd);
+		return result;
 	}
 
-	return result>0?0:-1;
 }
-void do_write_mavlink_msg(mavlink_message_t *message)
+int do_write_uart_mavlink_msg(g_uart_t *uart, mavlink_message_t *message)
 {
 	char buf[300];
+	int res;
 	// Translate message to buffer
 	unsigned len = mavlink_msg_to_send_buffer((uint8_t*)buf, message);
 	// Lock
-	pthread_mutex_lock(&g_uart.lock);
+	pthread_mutex_lock(&uart->lock);
 	// Write packet via serial link
-	write(g_uart.fd, buf, len);
+	res = write(uart->fd, buf, len);
 	// Wait until all data has been written
-	tcdrain(g_uart.fd);
+	tcdrain(uart->fd);
 	// Unlock
-	pthread_mutex_unlock(&g_uart.lock);
-	return;
+	pthread_mutex_unlock(&uart->lock);
+	return res ;
 }
-*/
 int do_write_uart_raw(char *data, int len)
 {
 	int res =0;
@@ -516,7 +513,10 @@ int is_fd_ready(int fd,int timeout_ms)
 		return 0;
 
 }
-void* recive_msg_thread_worker(void *args)
+
+
+#define USE_MAVLINK 1
+void* write_flight_thread_worker(void *args)
 {
 	int len,i,ret;
 	char buf[1024];
@@ -524,7 +524,7 @@ void* recive_msg_thread_worker(void *args)
 	set_thread_status(0x2,1);
 	while(!g_data.need_read_thread_quit){
 		//bzero(buf,1024);
-		ret = is_fd_ready(g_data.client_sockfd,70);
+		ret = is_fd_ready(g_data.client_sockfd,50);
 		if( ret < 0 ){
 			//select fd error;
 			debugMsg("Select socket fd error, exit ??\n");
@@ -558,7 +558,7 @@ void* recive_msg_thread_worker(void *args)
 	set_thread_status(0x2,0);
 	debugMsg("recive_msg_thread_worker exit\n");
 }
-void* send_msg_thread_worker(void *args)
+void* read_flight_thread_worker(void *args)
 {
 	int len,len_msg;
 	char buf[1024];
@@ -625,10 +625,10 @@ int do_creat_thread()
 	
 	g_data.need_read_thread_quit = 0;
 	g_data.need_write_thread_quit = 0;
-	res= pthread_create( &g_data.read_thread_id, NULL, &recive_msg_thread_worker, &g_data );
+	res= pthread_create( &g_data.read_thread_id, NULL, &read_flight_thread_worker, &g_data );
 	if( res != 0)
 		goto thread_err;
-	res= pthread_create( &g_data.write_thread_id, NULL, &send_msg_thread_worker, &g_data);
+	res= pthread_create( &g_data.write_thread_id, NULL, &write_flight_thread_worker, &g_data);
 	if( res != 0){
 		g_data.need_read_thread_quit = 1;
 		pthread_join(g_data.read_thread_id,NULL);
@@ -745,7 +745,11 @@ int main(int argc, char *argv[])
                         fprintf(stderr,"TcpToUart Accept error:%s, recreat sockfd\n",strerror(errno));
 			do_release_thread();
 			do_release_socket();
+#if 0 // loop try
 			continue;
+#else	//loop by script
+			break;
+#endif
 		}
         }
 
