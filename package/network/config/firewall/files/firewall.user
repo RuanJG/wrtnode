@@ -17,3 +17,12 @@ iptables -I FORWARD -p tcp -d 192.168.2.201 --dport 8080 -j ACCEPT
 iptables -t nat -I PREROUTING -p tcp --dport 8081 -j DNAT --to 192.168.2.1:80
 iptables -I FORWARD -p tcp -d 192.168.2.1 --dport 8081 -j ACCEPT
 
+iptables -t nat -I PREROUTING -p tcp --dport 8181 -j DNAT --to 192.168.2.1:8181
+iptables -I FORWARD -p tcp -d 192.168.2.1 --dport 8181 -j ACCEPT
+
+iptables -t nat -I PREROUTING -p tcp --dport 22 -j DNAT --to 192.168.2.1:22
+iptables -I FORWARD -p tcp -d 192.168.2.1 --dport 22 -j ACCEPT
+
+iptables -t nat -I PREROUTING -p tcp --dport 8554 -j DNAT --to 192.168.2.1:8554
+iptables -I FORWARD -p tcp -d 192.168.2.1 --dport 8554 -j ACCEPT
+
