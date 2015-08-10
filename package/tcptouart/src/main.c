@@ -21,6 +21,7 @@
 #define IPADDR "192.168.56.101"
 #define CLIENTNUM 10
 #define UART_NAME "/dev/ttyUSB0"
+#define UART_NAME_EX "/dev/ttyS0"
 #define BAUDRATE  57600 
 #define DATA_BITS  8
 #define STOP_BITS  1
@@ -58,13 +59,14 @@ typedef struct __g_uart_t{
 	int packet_rx_drop_count;
 }g_uart_t;
 
-#define debugMsg(format, ...) fprintf(stderr, format, ## __VA_ARGS__)
-#define msleep(x) usleep(x*1000)
 char ip_addr[32];
 int portnumber = PORTNUM;
 g_data_t g_data;
 g_uart_t g_uart;
+int debug = 0;
 
+#define debugMsg(format, ...) if(debug==1) fprintf(stderr, format, ## __VA_ARGS__)
+#define msleep(x) usleep(x*1000)
 
 
 int do_write(int fd,void *buffer,int length)
@@ -90,7 +92,8 @@ int do_write(int fd,void *buffer,int length)
 			return -1;
 		}else{
 			if( written_bytes < length )
-				debugMsg("write sockfd %d of %d\n",written_bytes,length);
+				debugMsg("write sockfd wrong !!!!!!!!!!!!!!   %d of %d\n",written_bytes,length);
+			debugMsg("write sockfd %d of %d\n",written_bytes,length);
 			return written_bytes;
 		}
 	}
@@ -114,7 +117,7 @@ int do_read(int client_sockfd,void *buf,int len)
 			debugMsg("read sockfd error client lost?\n");
 			return -1;
 		}else{
-			//debugMsg("read sockfd byte %d\n",glen);
+			debugMsg("read sockfd byte %d\n",glen);
 			return glen;
 		}
 	}
@@ -149,8 +152,15 @@ int do_open_uart()
 	// O_NOCTTY - Ignore special chars like CTRL-C
 	fd = open(g_uart.name, O_RDWR|O_NOCTTY|O_NDELAY);
 	if (fd == -1){
-		debugMsg("open %s file error\n",g_uart.name);
-		goto err_fd;
+		if( strcmp(UART_NAME,g_uart.name) == 0){
+			debugMsg("open %s file error, try %s\n",g_uart.name,UART_NAME_EX);
+			fd = open(UART_NAME_EX, O_RDWR|O_NOCTTY|O_NDELAY);
+		}else{
+			debugMsg("open %s file error, try %s\n",g_uart.name,UART_NAME);
+			fd = open(UART_NAME, O_RDWR|O_NOCTTY|O_NDELAY);
+		}
+		if( fd == -1 )
+			goto err_fd;
 	}
 
 	//fcntl(fd, F_SETFL, 0);
@@ -680,6 +690,7 @@ int main(int argc, char *argv[])
         int sin_size;
 	int tmp_sock;
 
+	fprintf(stderr,"Usage:%s ip port /dev/ttyxxx baudrate  debug[0,1]\n",argv[0]);
 	do_initdata();
         if(argc >=3 && atoi(argv[2])>0)
         {
@@ -693,6 +704,9 @@ int main(int argc, char *argv[])
 	{
 		sprintf(g_uart.name,"%s",argv[3]);
 		g_uart.baudrate = atoi(argv[4]);
+	}
+	if( argc == 6 ){
+		debug = atoi(argv[5]);
 	}
         debugMsg("TcpToUart  serial = %s %d\n",g_uart.name,g_uart.baudrate);
 
