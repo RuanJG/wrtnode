@@ -29,6 +29,14 @@
 #define HARDWARE_CONTROL  0
 
 
+#define READ_THREAD_ID 0x1
+#define WRITE_THREAD_ID 0x2
+#define RC_THREAD_ID 0x4
+
+
+#define USE_MAVLINK 1
+
+
 typedef struct __g_data_t{
 	//server sock
 	int sockfd;
@@ -43,6 +51,7 @@ typedef struct __g_data_t{
 	//thread
 	pthread_t read_thread_id;
 	pthread_t write_thread_id;
+	pthread_t rc_thread_id;
 	char thread_status;//b0=1/0 read on/off b1 = 1/0 write on/off
 	pthread_mutex_t mutex;
 }g_data_t;
@@ -64,6 +73,17 @@ int portnumber = PORTNUM;
 g_data_t g_data;
 g_uart_t g_uart;
 int debug = 0;
+
+typedef struct __g_rc_data_t{
+	mavlink_message_t rc_message;
+	int freq;
+	int sleep_time; // 1000000 us / freq
+	struct timeval time_stamp;
+	int max_lost_time;// 2s , lost connect   s
+	pthread_mutex_t lock;
+	int stop;
+}g_rc_data_t;
+g_rc_data_t g_rc_data;
 
 #define debugMsg(format, ...) if(debug==1) fprintf(stderr, format, ## __VA_ARGS__)
 #define msleep(x) usleep(x*1000)
@@ -152,6 +172,7 @@ int do_open_uart()
 	// O_NOCTTY - Ignore special chars like CTRL-C
 	fd = open(g_uart.name, O_RDWR|O_NOCTTY|O_NDELAY);
 	if (fd == -1){
+#if 0
 		if( strcmp(UART_NAME,g_uart.name) == 0){
 			debugMsg("open %s file error, try %s\n",g_uart.name,UART_NAME_EX);
 			fd = open(UART_NAME_EX, O_RDWR|O_NOCTTY|O_NDELAY);
@@ -160,6 +181,7 @@ int do_open_uart()
 			fd = open(UART_NAME, O_RDWR|O_NOCTTY|O_NDELAY);
 		}
 		if( fd == -1 )
+#endif
 			goto err_fd;
 	}
 
@@ -324,35 +346,7 @@ int do_close_uart()
 		close(g_uart.fd);
 	return 0;
 }
-int do_read_uart_mavlink_msg(g_uart_t *uart, mavlink_message_t *message)
-{
-	int result;
-	uint8_t cp;
-	mavlink_status_t status;
-	// Lock
-	pthread_mutex_lock(&uart->lock);
-	result = read(uart->fd, &cp, 1);
-	// Unlock
-	pthread_mutex_unlock(&uart->lock);
 
-	if (result > 0)
-	{
-		result = mavlink_parse_char(MAVLINK_COMM_1, cp, message, &status);
-		// check for dropped packets
-		if ( (uart->packet_rx_drop_count != status.packet_rx_drop_count) )
-		{
-			debugMsg("ERROR: DROPPED %d PACKETS\n", status.packet_rx_drop_count);
-			fprintf(stderr,"head is %02x ", cp);
-		}
-		debugMsg("read message：head is %02x msgid=%d,sysid=%d,compid=%d\n",cp,message->msgid,message->sysid,message->compid);
-		uart->packet_rx_drop_count != status.packet_rx_drop_count;
-
-		return result>0?1:0;
-	}else{
-		return result;
-	}
-
-}
 int do_write_uart_mavlink_msg(g_uart_t *uart, mavlink_message_t *message)
 {
 	char buf[300];
@@ -369,6 +363,72 @@ int do_write_uart_mavlink_msg(g_uart_t *uart, mavlink_message_t *message)
 	pthread_mutex_unlock(&uart->lock);
 	return res ;
 }
+
+int do_write_socket_mavlink_msg(int sockfd, mavlink_message_t *message)
+{
+	char buf[300];
+	int res,len;
+	// Translate message to buffer
+	unsigned len_msg = mavlink_msg_to_send_buffer((uint8_t*)buf, message);
+	// Lock
+	len = do_write(sockfd,buf, len_msg);
+	return len ;
+}
+
+int do_copy_mavlink_message_from_buffer(char * buffer, int buff_len, mavlink_message_t *message)
+{
+
+	int lest_len,msg_len;
+	int index;
+
+	for ( index = 0; index < buff_len ; index ++)
+	{
+		if( buffer[index] == MAVLINK_STX )
+		{
+			lest_len = buff_len-index; //include the stx
+			if( lest_len < 2){
+				msg_len = 0;
+				break;
+			}
+			msg_len = buffer[index+1] + MAVLINK_NUM_HEADER_BYTES;// MAVLINK_STX magic ~ payload
+			if( lest_len < msg_len ){
+				msg_len = 0;
+				break;
+			}
+			memcpy(&message->magic,buffer,msg_len);
+			index += msg_len;
+			break;
+		}
+	}
+	return index;
+}
+
+
+int do_read_mavlink_message_from_buffer(char * buffer, int buff_len, mavlink_message_t *message,int *res)
+{//return index, res : 1:mavlink_message 0: no ;
+
+	int result;
+	int index;
+	mavlink_status_t status;
+
+	*res = 0;
+	for ( index = 0; index < buff_len ; index ++)
+	{
+		if( mavlink_parse_char(MAVLINK_COMM_1, buffer[index], message, &status) )
+		{
+			if ( (g_uart.packet_rx_drop_count != status.packet_rx_drop_count) )
+			{
+				g_uart.packet_rx_drop_count != status.packet_rx_drop_count;
+				debugMsg("ERROR: DROPPED %d PACKETS\n", status.packet_rx_drop_count);
+			}
+			debugMsg("read message：head is %02x msgid=%d,sysid=%d,compid=%d\n",buffer[index],message->msgid,message->sysid,message->compid);
+			*res = 1;
+			break;
+		}
+	}
+	return index;
+}
+
 int do_write_uart_raw(char *data, int len)
 {
 	int res =0;
@@ -408,6 +468,7 @@ void do_initdata(){
 	g_data.need_write_thread_quit = 0;
 	g_data.read_thread_id = 0;
 	g_data.write_thread_id = 0;
+	g_data.rc_thread_id = 0;
 
 	portnumber = PORTNUM;
 	sprintf(ip_addr,"%s",IPADDR);
@@ -424,6 +485,10 @@ void do_initdata(){
 	g_uart.hardware_control = HARDWARE_CONTROL;
 	g_uart.fd = -1;
 	pthread_mutex_init(&g_uart.lock,NULL);
+
+	g_rc_data.freq = 20;
+	bzero(&g_rc_data.rc_message, sizeof(mavlink_message_t));
+	pthread_mutex_init(&g_rc_data.lock,NULL);
 
 }
 
@@ -446,12 +511,15 @@ void do_release_socket(){
 }
 void do_wait_thread()
 {
+	if( g_data.rc_thread_id > 0 )
+		pthread_join(g_data.rc_thread_id,NULL);
 	if( g_data.read_thread_id > 0 )
 		pthread_join(g_data.read_thread_id,NULL);
 	if( g_data.write_thread_id > 0 )
 		pthread_join(g_data.write_thread_id,NULL);
 	g_data.write_thread_id = 0;
 	g_data.read_thread_id = 0;
+	g_data.rc_thread_id = 0;
 }
 void do_release_thread()
 {
@@ -479,26 +547,25 @@ void quit_handler( int sig )
 	exit(0);
 
 }
-
-int is_thread_running()
+int is_thread_running(int thread_id)
 {
 	int ret = 0;
 
 	pthread_mutex_lock(&g_data.mutex);
 
-	if( (g_data.thread_status & 0x1)==0x1 ||  (g_data.thread_status & 0x2)==0x2 )
+	if( (g_data.thread_status & thread_id)==thread_id )
 		ret = 1;
 
 	pthread_mutex_unlock(&g_data.mutex);
 	return ret ;
 }
-void set_thread_status(int bit_mask,int val)
+void set_thread_status(int thread_id,int val)
 {
 	pthread_mutex_lock(&g_data.mutex);
 	if( val == 1)
-		g_data.thread_status |= bit_mask;
+		g_data.thread_status |= thread_id;
 	else 
-		g_data.thread_status &= ~bit_mask;
+		g_data.thread_status &= ~thread_id;
 	pthread_mutex_unlock(&g_data.mutex);
 }
 int is_fd_ready(int fd,int timeout_ms)
@@ -525,13 +592,260 @@ int is_fd_ready(int fd,int timeout_ms)
 }
 
 
-#define USE_MAVLINK 1
+void do_rc_lost_connect()
+{
+	
+	mavlink_rc_channels_override_t rc_packet;
+	mavlink_message_t message;
+
+	bzero(&rc_packet,sizeof(mavlink_rc_channels_override_t));
+	rc_packet.target_system = mavlink_msg_rc_channels_override_get_target_system(&g_rc_data.rc_message);
+	rc_packet.target_component = mavlink_msg_rc_channels_override_get_target_component(&g_rc_data.rc_message);
+	mavlink_msg_rc_channels_override_encode(g_rc_data.rc_message.sysid,g_rc_data.rc_message.compid, &message, &rc_packet);
+	do_write_uart_mavlink_msg(&g_uart,&message);
+	usleep(20000);
+	do_write_uart_mavlink_msg(&g_uart,&message);
+	usleep(20000);
+	do_write_uart_mavlink_msg(&g_uart,&message);
+
+	debugMsg("do_rc_lost_connect ... the last time rc packet here is > 2s\n");
+}
+
+void do_update_rc_value(mavlink_rc_channels_override_t *rc_packet)
+{
+	
+	pthread_mutex_lock(&g_rc_data.lock);
+
+	//bzero(&rc_packet,sizeof(mavlink_rc_channels_override_t));
+	rc_packet->target_system = mavlink_msg_rc_channels_override_get_target_system(&g_rc_data.rc_message);
+	rc_packet->target_component = mavlink_msg_rc_channels_override_get_target_component(&g_rc_data.rc_message);
+
+	rc_packet->chan1_raw = mavlink_msg_rc_channels_override_get_chan1_raw(&g_rc_data.rc_message);
+	rc_packet->chan2_raw = mavlink_msg_rc_channels_override_get_chan2_raw(&g_rc_data.rc_message);
+	rc_packet->chan3_raw = mavlink_msg_rc_channels_override_get_chan3_raw(&g_rc_data.rc_message);
+	rc_packet->chan4_raw = mavlink_msg_rc_channels_override_get_chan4_raw(&g_rc_data.rc_message);
+	rc_packet->chan5_raw = mavlink_msg_rc_channels_override_get_chan5_raw(&g_rc_data.rc_message);
+	rc_packet->chan6_raw = mavlink_msg_rc_channels_override_get_chan6_raw(&g_rc_data.rc_message);
+	rc_packet->chan7_raw = mavlink_msg_rc_channels_override_get_chan7_raw(&g_rc_data.rc_message);
+	rc_packet->chan8_raw = mavlink_msg_rc_channels_override_get_chan8_raw(&g_rc_data.rc_message);
+
+
+	pthread_mutex_unlock(&g_rc_data.lock);
+}
+void* rc_override_thread_worker(void *args)
+{
+	mavlink_rc_channels_override_t rc_packet;
+	mavlink_message_t message;
+    	struct timeval tv;
+	int id = g_data.rc_thread_id;
+
+
+	set_thread_status(RC_THREAD_ID,1);
+	g_rc_data.sleep_time = 1000000 / g_rc_data.freq; //us
+	
+	while( !g_rc_data.stop && !g_data.need_read_thread_quit && !g_data.need_write_thread_quit)
+	{
+    		gettimeofday(&tv, NULL);
+		if(  (tv.tv_sec - g_rc_data.time_stamp.tv_sec) >= g_rc_data.max_lost_time) 
+		{
+			do_rc_lost_connect();
+			break;
+		}
+		
+		do_update_rc_value(&rc_packet);
+		mavlink_msg_rc_channels_override_encode(g_rc_data.rc_message.sysid,g_rc_data.rc_message.compid, &message, &rc_packet);
+		do_write_uart_mavlink_msg(&g_uart,&message);
+		debugMsg("!!!!!!!!!!!! id(%d) do_update_rc_value after %d s: %d us\n",id,tv.tv_sec-g_rc_data.time_stamp.tv_sec,tv.tv_usec-g_rc_data.time_stamp.tv_usec );
+		usleep(g_rc_data.sleep_time);
+	}
+
+	set_thread_status(RC_THREAD_ID,0);
+}
+void do_start_rc_thread()
+{
+	int res;
+	g_rc_data.freq = 20;	
+	g_rc_data.stop = 0;
+	g_rc_data.max_lost_time = 2;
+	res= pthread_create( &g_data.rc_thread_id, NULL, &rc_override_thread_worker, &g_data );
+}
+void do_stop_rc_thread()
+{
+	g_rc_data.stop = 0;
+	if( g_data.rc_thread_id > 0 )
+		pthread_join(g_data.rc_thread_id,NULL);
+	g_data.rc_thread_id = 0;
+}
+
+int handle_rc_override_message(mavlink_message_t * message)
+{
+    	struct timeval tv;
+	int res;
+    	//gettimeofday(&tv, NULL);
+	//mavlink_rc_channels_override_t rc_packet;
+
+	//printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!get a rc override message after %d s:%d us\n",tv.tv_sec-g_rc_data.time_stamp.tv_sec, (tv.tv_usec-g_rc_data.time_stamp.tv_usec));
+	//mavlink_msg_rc_channels_override_decode(message,&rc_packet);
+	pthread_mutex_lock(&g_rc_data.lock);
+	memcpy(&g_rc_data.rc_message , message, sizeof(mavlink_message_t));
+	gettimeofday(&g_rc_data.time_stamp,NULL);
+
+	if( !is_thread_running(RC_THREAD_ID) )
+	{
+		do_start_rc_thread();
+	}
+
+	pthread_mutex_unlock(&g_rc_data.lock);
+}
+
+int handle_qgc_mavlink_message_sevice(mavlink_message_t *message)
+{
+	mavlink_rc_channels_override_t rc_msg;
+	int need_send_to_copter= 0;
+	int res = 0;
+
+	switch ( message->msgid ){
+		case MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE:
+			res = handle_rc_override_message(message);
+			break;
+
+		default :
+			need_send_to_copter = 1;
+			break;
+	}
+	if( need_send_to_copter ){
+		res = do_write_uart_mavlink_msg(&g_uart,message);
+		if ( 0 > res)
+		{
+			res = -1;
+			debugMsg("write msg failse %d, may be uart error \n",res);
+		}	
+	}
+	return res;
+}
+
+void* write_flight_mavlink_thread_worker(void *args)
+{
+	int len,i,ret,res;
+	char buf[1024];
+	mavlink_message_t message;
+	
+	set_thread_status(WRITE_THREAD_ID,1);
+	while(!g_data.need_read_thread_quit){
+		//bzero(buf,1024);
+		ret = is_fd_ready(g_data.client_sockfd,50);
+		if( ret < 0 ){
+			//select fd error;
+			debugMsg("Select socket fd error, exit ??\n");
+			//break;
+		}else if (ret == 0){
+			//no fd ready
+			//debugMsg("Select socket fd no data\n");
+			continue;
+		}
+
+		len = do_read(g_data.client_sockfd ,buf, 1024);
+		if( len < 0 ){
+			debugMsg("Client connect error, exit !!\n");
+			break;
+		}else if( len == 0){
+			;//no data to deal;maybe network problem
+		}else{
+			ret = 0;
+			//debugMsg("############### ret=%d,res=%d\n",ret,res);
+			for( ret = 0; ret < len ;ret ++){
+				ret += do_read_mavlink_message_from_buffer(&buf[ret],len-ret,&message,&res);
+				if( res ) {
+					//deal with a mavlink message
+					if ( 0 > handle_qgc_mavlink_message_sevice(&message))
+					{
+						debugMsg("handle_mavlink_message_sevice return error\n");
+						break;
+					}
+				}
+				//debugMsg("ret=%d,res=%d\n",ret,res);
+			}
+			//debugMsg("############### ret=%d,res=%d\n",ret,res);
+		}
+	}
+	g_data.need_read_thread_quit = 1;
+	g_data.need_write_thread_quit = 1;
+	set_thread_status(WRITE_THREAD_ID,0);
+	debugMsg("recive_msg_thread_worker exit\n");
+}
+void* read_flight_mavlink_thread_worker(void *args)
+{
+	int len,len_msg;
+	char buf[1024];
+	mavlink_message_t message;
+	char *ptr;
+	int i,ret,res;
+
+	fd_set fdsr;
+
+	bzero(buf,1024);
+	sprintf(buf,"OK");
+	set_thread_status(READ_THREAD_ID,1);
+
+	tcflush(g_uart.fd, TCIOFLUSH);
+
+	while(!g_data.need_write_thread_quit){
+		//do_read_mavlink_msg(&message);
+		ret = is_fd_ready(g_uart.fd ,70);
+		if( ret < 0 ){
+			//select fd error;
+			debugMsg("Select uart fd error, exit ??\n");
+			//break;
+		}else if (ret == 0){
+			//no fd ready
+			//debugMsg("Select uart fd no data\n");
+			continue;
+		}
+
+		len_msg = do_read_uart_raw(buf,1024);
+		if( len_msg > 0)
+		{
+			ret = 0;
+			//debugMsg("@@@@@@@@@@@@@@@@@@@@@@@ ret=%d,res=%d\n",ret,res);
+			for( ret = 0; ret < len_msg ;ret ++){
+				ret += do_read_mavlink_message_from_buffer(&buf[ret],len_msg-ret,&message,&res);
+				if( res ) {
+					//do_write_uart_mavlink_msg(&g_uart,&message);
+					len = do_write_socket_mavlink_msg(g_data.client_sockfd, &message);
+					if( len < 0 ){
+						debugMsg("send msg failse %d, may be client leave\n",len);
+						break;
+					}
+				}
+				//debugMsg("ret=%d,res=%d\n",ret,res);
+			}
+			//debugMsg("@@@@@@@@@@@@@@@@@@@@@@@ ret=%d,res=%d\n",ret,res);
+
+		}else if(len_msg == 0){
+			debugMsg("read no data from uart result %d\n",len_msg);
+		}else{
+			debugMsg("read uart len =%d, error %d !!!!!\n",len_msg,errno);
+			fprintf(stderr,"TcpToUart  error:%s\n\a",strerror(errno));
+		}
+		//msleep(70);
+	}
+	g_data.need_read_thread_quit = 1;
+	g_data.need_write_thread_quit = 1;
+	set_thread_status(READ_THREAD_ID,0);
+	debugMsg("send_msg_thread_worker exit\n");
+}
+
+
+
+
+
+//data raw
 void* write_flight_thread_worker(void *args)
 {
 	int len,i,ret;
 	char buf[1024];
 	
-	set_thread_status(0x2,1);
+	set_thread_status(WRITE_THREAD_ID,1);
 	while(!g_data.need_read_thread_quit){
 		//bzero(buf,1024);
 		ret = is_fd_ready(g_data.client_sockfd,50);
@@ -565,7 +879,7 @@ void* write_flight_thread_worker(void *args)
 	}
 	g_data.need_read_thread_quit = 1;
 	g_data.need_write_thread_quit = 1;
-	set_thread_status(0x2,0);
+	set_thread_status(WRITE_THREAD_ID,0);
 	debugMsg("recive_msg_thread_worker exit\n");
 }
 void* read_flight_thread_worker(void *args)
@@ -580,7 +894,7 @@ void* read_flight_thread_worker(void *args)
 
 	bzero(buf,1024);
 	sprintf(buf,"OK");
-	set_thread_status(0x1,1);
+	set_thread_status(READ_THREAD_ID,1);
 
 	tcflush(g_uart.fd, TCIOFLUSH);
 
@@ -626,7 +940,7 @@ void* read_flight_thread_worker(void *args)
 	}
 	g_data.need_read_thread_quit = 1;
 	g_data.need_write_thread_quit = 1;
-	set_thread_status(0x1,0);
+	set_thread_status(READ_THREAD_ID,0);
 	debugMsg("send_msg_thread_worker exit\n");
 }
 int do_creat_thread()
@@ -635,10 +949,18 @@ int do_creat_thread()
 	
 	g_data.need_read_thread_quit = 0;
 	g_data.need_write_thread_quit = 0;
+#if USE_MAVLINK
+	res= pthread_create( &g_data.read_thread_id, NULL, &read_flight_mavlink_thread_worker, &g_data );
+#else
 	res= pthread_create( &g_data.read_thread_id, NULL, &read_flight_thread_worker, &g_data );
+#endif
 	if( res != 0)
 		goto thread_err;
+#if USE_MAVLINK
+	res= pthread_create( &g_data.write_thread_id, NULL, &write_flight_mavlink_thread_worker, &g_data);
+#else
 	res= pthread_create( &g_data.write_thread_id, NULL, &write_flight_thread_worker, &g_data);
+#endif
 	if( res != 0){
 		g_data.need_read_thread_quit = 1;
 		pthread_join(g_data.read_thread_id,NULL);
@@ -700,12 +1022,12 @@ int main(int argc, char *argv[])
                 fprintf(stderr,"TcpToUart  Usage:%s ip port /dev/ttyxxx baudrate \n",argv[0]);
         }
         debugMsg("TcpToUart  Use addr,portnumber= %s:%d\a\n",ip_addr,portnumber);
-	if( argc ==5 )
+	if( argc >=5 )
 	{
 		sprintf(g_uart.name,"%s",argv[3]);
 		g_uart.baudrate = atoi(argv[4]);
 	}
-	if( argc == 6 ){
+	if( argc >= 6 ){
 		debug = atoi(argv[5]);
 	}
         debugMsg("TcpToUart  serial = %s %d\n",g_uart.name,g_uart.baudrate);
@@ -735,7 +1057,7 @@ int main(int argc, char *argv[])
 		tmp_sock = accept(g_data.sockfd,(struct sockaddr *)(&g_data.client_addr),&sin_size);
                 if(tmp_sock != -1)
                 {
-			if( is_thread_running() ){//has connected a client
+			if( is_thread_running(READ_THREAD_ID) || is_thread_running(WRITE_THREAD_ID) ){//has connected a client
 				#if 1
 				debugMsg("thread is running , close new clinet\n");
 				close(tmp_sock);
