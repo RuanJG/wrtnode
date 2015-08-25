@@ -16,5 +16,6 @@ stop_service() {
         echo "stop my server"
 	killall setgateway.sh
         killall tcptouart.sh tcptouart
+	killall rtspfileserver.sh rtspfileserver
 }
 
