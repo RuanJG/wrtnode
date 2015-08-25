@@ -608,7 +608,7 @@ void do_rc_lost_connect()
 	usleep(20000);
 	do_write_uart_mavlink_msg(&g_uart,&message);
 
-	debugMsg("do_rc_lost_connect ... the last time rc packet here is > 2s\n");
+	//printf("do_rc_lost_connect ... the last time rc packet here is > 2s\n");
 }
 
 void do_update_rc_value(mavlink_rc_channels_override_t *rc_packet)
@@ -655,10 +655,10 @@ void* rc_override_thread_worker(void *args)
 		do_update_rc_value(&rc_packet);
 		mavlink_msg_rc_channels_override_encode(g_rc_data.rc_message.sysid,g_rc_data.rc_message.compid, &message, &rc_packet);
 		do_write_uart_mavlink_msg(&g_uart,&message);
-		debugMsg("!!!!!!!!!!!! id(%d) do_update_rc_value after %d s: %d us\n",id,tv.tv_sec-g_rc_data.time_stamp.tv_sec,tv.tv_usec-g_rc_data.time_stamp.tv_usec );
+		//printf("!!!!!!!!!!!! id(%d) do_update_rc_value after %d s: %d us\n",id,tv.tv_sec-g_rc_data.time_stamp.tv_sec,tv.tv_usec-g_rc_data.time_stamp.tv_usec );
 		usleep(g_rc_data.sleep_time);
 	}
-
+	do_rc_lost_connect();
 	set_thread_status(RC_THREAD_ID,0);
 }
 void do_start_rc_thread()
@@ -666,7 +666,7 @@ void do_start_rc_thread()
 	int res;
 	g_rc_data.freq = 20;	
 	g_rc_data.stop = 0;
-	g_rc_data.max_lost_time = 2;
+	g_rc_data.max_lost_time = 5;
 	res= pthread_create( &g_data.rc_thread_id, NULL, &rc_override_thread_worker, &g_data );
 }
 void do_stop_rc_thread()
@@ -681,10 +681,10 @@ int handle_rc_override_message(mavlink_message_t * message)
 {
     	struct timeval tv;
 	int res;
-    	//gettimeofday(&tv, NULL);
+    	gettimeofday(&tv, NULL);
 	//mavlink_rc_channels_override_t rc_packet;
 
-	//printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!get a rc override message after %d s:%d us\n",tv.tv_sec-g_rc_data.time_stamp.tv_sec, (tv.tv_usec-g_rc_data.time_stamp.tv_usec));
+	//printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!get a rc override message after %ds:%dus\n",tv.tv_sec-g_rc_data.time_stamp.tv_sec,tv.tv_usec-g_rc_data.time_stamp.tv_usec);
 	//mavlink_msg_rc_channels_override_decode(message,&rc_packet);
 	pthread_mutex_lock(&g_rc_data.lock);
 	memcpy(&g_rc_data.rc_message , message, sizeof(mavlink_message_t));
