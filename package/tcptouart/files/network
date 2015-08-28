@@ -18,11 +18,8 @@ config interface 'lan'
 	option macaddr '64:51:7e:80:1c:e6'
 
 config interface 'wan'
-	option ifname 'apcli0'
-	option proto 'static'
-	option ipaddr '192.168.1.108'
-	option netmask '255.255.255.0'
-	option macaddr '64:51:7e:80:1c:e7'
+	option ifname 'wwan0'
+	option proto 'dhcp'
 
 config switch
 	option name 'switch0'

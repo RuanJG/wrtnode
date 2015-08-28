@@ -2,7 +2,7 @@ config wifi-device  ra0
 	option type     ralink
 	option mode 	9
 	option channel  auto
-	option txpower 90
+	option txpower 60
 	option ht 	20
 	option country US
 	
@@ -13,10 +13,10 @@ config wifi-iface
 	option device   ra0
 	option network	lan
 	option mode     ap
-	option ssid     WRTnode1CE6
+	option ssid     WRTnode4g
 	option encryption psk2
 	option key 12345678
-	option ApCliEnable '1'
+	option ApCliEnable '0'
 	option ApCliSsid 'te-copter'
 	option ApCliAuthMode 'WPA2PSK'
 	option ApCliEncrypType 'TKIPAES'

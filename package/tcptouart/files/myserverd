@@ -5,7 +5,7 @@ START=99
 USE_PROCD=1
 
 start_service() {
-	/bin/setgateway.sh &
+	#/bin/setgateway.sh &
 	/bin/tcptouart.sh &
 	#mjpg_streamer  -i "input_uvc.so -d /dev/video0 -r 320x240 -f 30" -o "output_http.so -p 8181" &
 	if [ -f /bin/rtspfileserver.sh ];then
@@ -14,7 +14,7 @@ start_service() {
 }
 stop_service() {
         echo "stop my server"
-	killall setgateway.sh
+	#killall setgateway.sh
         killall tcptouart.sh tcptouart
 	killall rtspfileserver.sh rtspfileserver
 }
