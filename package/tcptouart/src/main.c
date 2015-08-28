@@ -88,6 +88,40 @@ g_rc_data_t g_rc_data;
 #define debugMsg(format, ...) if(debug==1) fprintf(stderr, format, ## __VA_ARGS__)
 #define msleep(x) usleep(x*1000)
 
+int byte_every_s = 0;
+int fps_every_s = 0;
+void do_time_alloc_msg(int msg_size)
+{
+	static int sum_size=0;
+	static struct timeval tv_last;
+	struct timeval tv_now ;
+	static int fps = 0;
+
+	int diff_sec=0;
+
+	if( !debug ) return;
+
+pthread_mutex_lock(&g_data.mutex);
+	if( sum_size == 0 ){
+		gettimeofday(&tv_last, NULL);
+	}
+
+	gettimeofday(&tv_now, NULL);
+	diff_sec = tv_now.tv_sec - tv_last.tv_sec ;
+	if( diff_sec > 1 ){
+		byte_every_s = sum_size;
+		fps_every_s = fps;
+		debugMsg(">>>>>>>>>>>>>>>>>>>>>>> net status: %d byte/s, %d fps \n",byte_every_s,fps_every_s);
+		fps = 0;
+		sum_size = 0;
+		tv_last.tv_sec = tv_now.tv_sec;
+		tv_last.tv_usec = tv_now.tv_usec;
+	}
+
+	fps ++;
+	sum_size += msg_size;
+pthread_mutex_unlock(&g_data.mutex);
+}
 
 int do_write(int fd,void *buffer,int length)
 {
@@ -114,6 +148,7 @@ int do_write(int fd,void *buffer,int length)
 			if( written_bytes < length )
 				debugMsg("write sockfd wrong !!!!!!!!!!!!!!   %d of %d\n",written_bytes,length);
 			debugMsg("write sockfd %d of %d\n",written_bytes,length);
+			do_time_alloc_msg(written_bytes);
 			return written_bytes;
 		}
 	}
@@ -138,6 +173,7 @@ int do_read(int client_sockfd,void *buf,int len)
 			return -1;
 		}else{
 			debugMsg("read sockfd byte %d\n",glen);
+			do_time_alloc_msg(glen);
 			return glen;
 		}
 	}
