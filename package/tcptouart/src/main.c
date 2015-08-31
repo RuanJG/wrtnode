@@ -35,7 +35,8 @@
 
 
 #define USE_MAVLINK 1
-
+#define TCPTOUART_SOCKET_CHAN_ID MAVLINK_COMM_1
+#define TCPTOUART_UART_CHAN_ID MAVLINK_COMM_0
 
 typedef struct __g_data_t{
 	//server sock
@@ -439,8 +440,7 @@ int do_copy_mavlink_message_from_buffer(char * buffer, int buff_len, mavlink_mes
 	return index;
 }
 
-
-int do_read_mavlink_message_from_buffer(char * buffer, int buff_len, mavlink_message_t *message,int *res)
+int do_read_mavlink_message_from_buffer(uint8_t chan, char * buffer, int buff_len, mavlink_message_t *message,int *res)
 {//return index, res : 1:mavlink_message 0: no ;
 
 	int result;
@@ -450,7 +450,7 @@ int do_read_mavlink_message_from_buffer(char * buffer, int buff_len, mavlink_mes
 	*res = 0;
 	for ( index = 0; index < buff_len ; index ++)
 	{
-		if( mavlink_parse_char(MAVLINK_COMM_1, buffer[index], message, &status) )
+		if( mavlink_parse_char(chan, buffer[index], message, &status) )
 		{
 			if ( (g_uart.packet_rx_drop_count != status.packet_rx_drop_count) )
 			{
@@ -790,7 +790,7 @@ void* write_flight_mavlink_thread_worker(void *args)
 			ret = 0;
 			//debugMsg("############### ret=%d,res=%d\n",ret,res);
 			for( ret = 0; ret < len ;ret ++){
-				ret += do_read_mavlink_message_from_buffer(&buf[ret],len-ret,&message,&res);
+				ret += do_read_mavlink_message_from_buffer(TCPTOUART_UART_CHAN_ID, &buf[ret],len-ret,&message,&res);
 				if( res ) {
 					//deal with a mavlink message
 					if ( 0 > handle_qgc_mavlink_message_sevice(&message))
@@ -844,7 +844,7 @@ void* read_flight_mavlink_thread_worker(void *args)
 			ret = 0;
 			//debugMsg("@@@@@@@@@@@@@@@@@@@@@@@ ret=%d,res=%d\n",ret,res);
 			for( ret = 0; ret < len_msg ;ret ++){
-				ret += do_read_mavlink_message_from_buffer(&buf[ret],len_msg-ret,&message,&res);
+				ret += do_read_mavlink_message_from_buffer(TCPTOUART_SOCKET_CHAN_ID, &buf[ret],len_msg-ret,&message,&res);
 				if( res ) {
 					//do_write_uart_mavlink_msg(&g_uart,&message);
 					len = do_write_socket_mavlink_msg(g_data.client_sockfd, &message);
