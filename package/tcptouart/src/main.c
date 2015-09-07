@@ -22,7 +22,7 @@
 #define CLIENTNUM 10
 #define UART_NAME "/dev/ttyUSB0"
 #define UART_NAME_EX "/dev/ttyS0"
-#define BAUDRATE  57600 
+#define BAUDRATE  9600
 #define DATA_BITS  8
 #define STOP_BITS  1
 #define PARITY  0
@@ -34,7 +34,7 @@
 #define RC_THREAD_ID 0x4
 
 
-#define USE_MAVLINK 1
+#define USE_MAVLINK 0
 #define TCPTOUART_SOCKET_CHAN_ID MAVLINK_COMM_1
 #define TCPTOUART_UART_CHAN_ID MAVLINK_COMM_0
 

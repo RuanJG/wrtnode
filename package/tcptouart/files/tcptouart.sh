@@ -1,5 +1,5 @@
 #!/bin/sh
-uart_name='/dev/ttyS0'
+uart_name='/dev/ttyUSB0'
 
 while [ '1' == '1' ]
 do
@@ -10,7 +10,7 @@ do
 		echo can not find ip in br-lan
 	else
         	echo "start tcpuart server, in $ip"
-        	/bin/tcptouart $ip 6666 $uart_name 57600
+        	/bin/tcptouart $ip 6666 $uart_name 9600
 	fi
 	sleep 1
 done
