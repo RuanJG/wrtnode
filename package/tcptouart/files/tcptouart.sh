@@ -1,5 +1,5 @@
 #!/bin/sh
-uart_name='/dev/ttyUSB0'
+uart_name='/dev/ttyS0'
 
 while [ '1' == '1' ]
 do

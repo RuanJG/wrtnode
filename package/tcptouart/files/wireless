@@ -17,7 +17,7 @@ config wifi-iface
 	option encryption psk2
 	option key 12345678
 	option ApCliEnable '1'
-	option ApCliSsid 'te-copter'
+	option ApCliSsid 'car'
 	option ApCliAuthMode 'WPA2PSK'
 	option ApCliEncrypType 'TKIPAES'
 	option ApCliPassWord '88888888'

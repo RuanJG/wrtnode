@@ -20,7 +20,7 @@ config interface 'lan'
 config interface 'wan'
 	option ifname 'apcli0'
 	option proto 'static'
-	option ipaddr '192.168.1.108'
+	option ipaddr '192.168.1.109'
 	option netmask '255.255.255.0'
 	option macaddr '64:51:7e:80:1c:e7'
 
