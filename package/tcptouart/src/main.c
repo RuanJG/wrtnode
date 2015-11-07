@@ -403,7 +403,7 @@ int do_write_uart_mavlink_msg(g_uart_t *uart, mavlink_message_t *message)
 
 int do_write_socket_mavlink_msg(int sockfd, mavlink_message_t *message)
 {
-	char buf[300];
+	char buf[MAVLINK_MAX_PACKET_LEN];
 	int res,len;
 	// Translate message to buffer
 	unsigned len_msg = mavlink_msg_to_send_buffer((uint8_t*)buf, message);
@@ -1042,11 +1042,88 @@ int do_creat_service_socket()
 	return 0;
 
 }
+
+
+//##################################################### clinet socket function
+int copter_sockfd = 0;
+char copter_ip[32];
+int copter_port = 6666;
+int is_copter_socket_connected()
+{
+	if( copter_sockfd > 0 ) return 1;
+	return 0;
+}
+int get_client_socket(char * ip, int port)
+{
+	int sockfd;
+        struct sockaddr_in servaddr;
+ 
+        if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0 ) {
+                debugMsg("创建网络连接失败,本线程即将终止---socket error!\n");
+		return -1;
+        };
+ 
+        bzero(&servaddr, sizeof(servaddr));
+        servaddr.sin_family = AF_INET;
+        servaddr.sin_port = htons(port);
+        if (inet_pton(AF_INET, ip, &servaddr.sin_addr) <= 0 ){
+                debugMsg("set socket addr error -inet_pton error!\n");
+                return -1;
+        };
+ 
+        if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0){
+                debugMsg("连接到服务器失败,connect error!\n");
+		return -1;
+        }
+        //log("与远端建立了连接\n");
+
+	return sockfd;
+}
+void handle_gcs_mavlink_message(mavlink_message_t *msg )
+{	
+	mavlink_param_set_t  package;
+	int sfd;
+
+	if(msg->msgid == MAVLINK_MSG_ID_PARAM_SET && msg->sysid == 212 ){
+		mavlink_msg_param_set_decode(msg, &package);
+		if( package.param_type == 0 ){
+			strcpy(copter_ip,package.param_id);
+		}else if( package.param_type == 1){
+			copter_port = *(int *)package.param_id;
+		}else if( package.param_type == 2){
+			if( is_copter_socket_connected() == 1){
+				close(copter_sockfd);
+				copter_sockfd = 0;
+			}
+			sfd = get_client_socket(copter_ip,copter_port);
+			if( sfd > 0 ) copter_sockfd = sfd;
+			else{
+				debugMsg("connect copter error\n");
+			}
+		}else if( package.param_type == 3){
+			if( is_copter_socket_connected() == 1){
+				close(copter_sockfd);
+				copter_sockfd = 0;
+			}
+		}
+	}else{
+		if( 0 == is_copter_socket_connected() ){
+			debugMsg("not connect copter ,ignore gcs's msg\n");
+		}
+		do_write_socket_mavlink_msg(copter_sockfd,msg);
+	}
+}
 int main(int argc, char *argv[])
 {
 
         int sin_size;
 	int tmp_sock;
+	int len,len_msg;
+	char buf[1024];
+	mavlink_message_t message;
+	char *ptr;
+	int i,ret,res;
+	fd_set fdsr;
 
 	fprintf(stderr,"Usage:%s ip port /dev/ttyxxx baudrate  debug[0,1]\n",argv[0]);
 	do_initdata();
@@ -1076,54 +1153,63 @@ int main(int argc, char *argv[])
 	signal(SIGINT,quit_handler);
 
 
-
+	bzero(copter_ip, sizeof(copter_ip));
         while(!g_data.need_close)
-        {
-		if( g_data.sockfd <= 0 ){
-			if( do_creat_service_socket() < 0 ){
-				debugMsg("creat socket failse, Waiting and retry  ...\n");
-				sleep(1);
-				continue;
+	{
+		ret = is_fd_ready(g_uart.fd ,1);
+		if( ret < 0 ){
+			//select fd error;
+			debugMsg("Select uart fd error, exit ??\n");
+			//break;
+		}
+		if( ret > 0 ){
+			len_msg = do_read_uart_raw(buf,1024);
+			if( len_msg > 0)
+			{
+				ret = 0;
+				//debugMsg("@@@@@@@@@@@@@@@@@@@@@@@ ret=%d,res=%d\n",ret,res);
+				for( ret = 0; ret < len_msg ;ret ++){
+					ret += do_read_mavlink_message_from_buffer(TCPTOUART_SOCKET_CHAN_ID, &buf[ret],len_msg-ret,&message,&res);
+					if( res ) {
+						handle_gcs_mavlink_message(&message);
+					}
+					//debugMsg("ret=%d,res=%d\n",ret,res);
+				}
+				//debugMsg("@@@@@@@@@@@@@@@@@@@@@@@ ret=%d,res=%d\n",ret,res);
+			}else if(len_msg == 0){
+				debugMsg("read no data from uart result %d\n",len_msg);
+			}else{
+				debugMsg("read uart len =%d, error %d !!!!!\n",len_msg,errno);
+				fprintf(stderr,"TcpToUart  error:%s\n\a",strerror(errno));
 			}
 		}
 
-		debugMsg("socket %d Wait for client ...\n",g_data.sockfd);
-                /* 服务器阻塞,直到客户程序建立连接  */
-                sin_size=sizeof(struct sockaddr_in);
-		tmp_sock = accept(g_data.sockfd,(struct sockaddr *)(&g_data.client_addr),&sin_size);
-                if(tmp_sock != -1)
-                {
-			if( is_thread_running(READ_THREAD_ID) || is_thread_running(WRITE_THREAD_ID) ){//has connected a client
-				#if 1
-				debugMsg("thread is running , close new clinet\n");
-				close(tmp_sock);
-				continue;
-				#else
-				debugMsg("thread is running , connect new clinet\n");
-				do_release_thread();
-				close(g_data.client_sockfd);
-				g_data.client_sockfd = tmp_sock;
-				do_creat_thread();
-				sleep(1);
-				#endif
-			}else{
-				debugMsg("no clinet servering, creat thread for new clinet\n");
-				do_release_client_socket();
-				g_data.client_sockfd = tmp_sock;
-				do_creat_thread();
-				sleep(1);
+		//listen cotper_socket
+		if( 1 == is_copter_socket_connected() ){
+
+			ret = is_fd_ready(copter_sockfd,1);
+			if( ret < 0 ){
+				//select fd error;
+				debugMsg("Select socket fd error, exit ??\n");
+				//break;
 			}
-                }else{
-                        fprintf(stderr,"TcpToUart Accept error:%s, recreat sockfd\n",strerror(errno));
-			do_release_thread();
-			do_release_socket();
-#if 0 // loop try
-			continue;
-#else	//loop by script
-			break;
-#endif
+			if( ret > 0 ){
+				len = do_read(copter_sockfd,buf,1024);
+				if( len < 0 ){
+					debugMsg("Client connect error, exit !!\n");
+					break;
+				}else if( len == 0){
+					;//no data to deal;maybe network problem
+				}else{
+					if( 0 > do_write_uart_raw(buf,len) ){
+						debugMsg("write uart error \n");
+						fprintf(stderr,"TcpToUart  error:%s\n\a",strerror(errno));
+					}
+				}
+			}
 		}
-        }
+
+	}
 
         //close(g_data.sockfd);
 	debugMsg("quit normally \n");
